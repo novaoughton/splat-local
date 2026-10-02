@@ -9,7 +9,9 @@ const frustaToggle = $("frustaToggle");
 const frustaCheckbox = $("frustaCheckbox");
 const fileInput = $("fileInput");
 
+const resetViewBtn = $("resetViewBtn");
 const viewer = createViewer($("canvas"));
+resetViewBtn.addEventListener("click", () => viewer.resetView());
 
 const STAGES = ["frames", "poses", "train", "export"];
 const STAGE_LABEL = { frames: "Frames", poses: "Poses", train: "Train", export: "Export" };
@@ -27,6 +29,10 @@ let lastSparseUrl = null;
 let lastCheckpointUrl = null;
 let checkpointCount = 0;
 let lastCamerasCount = 0;
+let hudCheckpoint = null; // the latest state.checkpoint, for the HUD
+let splatCount = null; // splats in the scene the viewer is showing
+let splatCountUrl = null; // the checkpoint URL splatCount belongs to
+let splatCountKey = null; // last lookup made, so state events don't repeat it
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
 
@@ -268,6 +274,7 @@ function mountRunning() {
     fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }).catch(() => {});
   });
   frustaToggle.hidden = false;
+  resetViewBtn.hidden = false;
 }
 
 function mountDone() {
@@ -359,7 +366,7 @@ function updateDone(state) {
   if (state.name) els.title.textContent = state.name;
   els.artifactList.innerHTML = (state.artifacts || []).map((a) => `
     <div class="artifact">
-      <div><div class="name">${a.name}</div><div class="size">${humanSize(a.bytes)}</div></div>
+      <div><div class="name">${a.name}</div><div class="size">${a.gaussians ? `${(a.gaussians / 1e6).toFixed(2)}M splats · ` : ""}${humanSize(a.bytes)}</div></div>
       <a class="btn" href="${a.url}" download>Download</a>
     </div>
   `).join("") || `<div class="center-note">No artifacts listed.</div>`;
@@ -412,9 +419,54 @@ function updateViewer(state) {
     checkpointCount++;
     viewer.loadCheckpoint(state.checkpoint.url);
   }
-  viewportHud.innerHTML = state.checkpoint
-    ? `<div class="line">checkpoint <b>${checkpointCount}</b></div><div class="line">step <b>${state.checkpoint.step.toLocaleString()}</b> / ${state.checkpoint.total_steps.toLocaleString()}</div>`
-    : "";
+  hudCheckpoint = state.checkpoint || null;
+  // At most two lookups per file: when it appears, and again once the export
+  // stage's measurements land.
+  const countKey = state.checkpoint && `${state.checkpoint.url}|${state.artifacts ? 1 : 0}`;
+  if (countKey && countKey !== splatCountKey) {
+    splatCountKey = countKey;
+    updateSplatCount(state);
+  }
+  renderHud();
+}
+
+// The count of the file on screen. The viewer itself can't say: it streams the
+// scene in levels of detail, so its own count starts at 0 and then tracks only
+// what is currently drawn. Finished scenes use the export stage's measurement
+// (it lands a beat after the viewer file does, hence the retry on later
+// states); training checkpoints are PLYs, whose header states the count.
+async function updateSplatCount(state) {
+  const url = state.checkpoint.url;
+  if (splatCountUrl !== url) { splatCountUrl = url; splatCount = null; }
+  const name = url.split("/").pop();
+  let count = (state.artifacts || []).find((a) => a.name === name)?.gaussians ?? null;
+  if (count == null && name.endsWith(".ply")) count = await plyVertexCount(url);
+  if (splatCountUrl !== url || count == null) return;
+  splatCount = count;
+  renderHud();
+}
+
+// Reads just the header: the first chunk of the response, then cancels the rest.
+async function plyVertexCount(url) {
+  try {
+    const r = await fetch(url, { headers: { Range: "bytes=0-4095" } });
+    const reader = r.body.getReader();
+    const { value } = await reader.read();
+    reader.cancel().catch(() => {});
+    const m = new TextDecoder().decode(value).match(/element vertex (\d+)/);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderHud() {
+  const c = hudCheckpoint;
+  viewportHud.innerHTML = [
+    c && `<div class="line">checkpoint <b>${checkpointCount}</b></div>`,
+    c && `<div class="line">step <b>${c.step.toLocaleString()}</b> / ${c.total_steps.toLocaleString()}</div>`,
+    c && splatCount != null && `<div class="line">splats <b>${splatCount.toLocaleString()}</b></div>`,
+  ].filter(Boolean).join("");
 }
 
 // --------------------------------------------------------------- driving ---
@@ -495,6 +547,11 @@ function resetToIdle() {
   checkpointCount = 0;
   lastCamerasCount = 0;
   frustaToggle.hidden = true;
+  resetViewBtn.hidden = true;
+  hudCheckpoint = null;
+  splatCount = null;
+  splatCountUrl = null;
+  splatCountKey = null;
   frustaCheckbox.checked = true;
   viewer.setFrustaVisible(true);
   viewportHud.innerHTML = "";

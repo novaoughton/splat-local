@@ -106,6 +106,21 @@
   }
   .viewport-hud .line { margin-bottom: 3px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .viewport-hud .line b { color: var(--text); font-weight: 600; }
+  .view-btn {
+    position: absolute;
+    top: 50px;
+    right: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    background: rgba(10,11,12,.55);
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .view-btn:hover { color: var(--text); border-color: var(--accent); }
   .frusta-toggle[hidden] { display: none; } /* display:flex below would override [hidden] */
   .frusta-toggle {
     position: absolute;
@@ -375,6 +390,7 @@
         <input type="checkbox" id="frustaCheckbox" checked />
         camera frusta
       </label>
+      <button class="view-btn" id="resetViewBtn" hidden>reset view</button>
       <div class="nav-hint">drag orbit · scroll zoom · WASD move · ←→ turn · ↑↓ look</div>
     </main>
   </div>
