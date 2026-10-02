@@ -339,6 +339,22 @@
   .project .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
   .project .meta.bad { color: var(--bad); }
 
+  .length-warn {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--accent-soft);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+  .length-warn:empty { display: none; }
+  .length-warn p { margin: 0; }
+  .length-warn b { color: var(--text); font-weight: 600; }
+
   .disk-note { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
   .disk-note:empty { display: none; }
 

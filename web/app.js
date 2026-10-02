@@ -92,6 +92,7 @@ function mountIdle() {
     </div>
     <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">How to film a room that reconstructs well →</a>
     <div id="videoPreviewSlot"></div>
+    <div class="length-warn" id="lengthWarn"></div>
     <div class="field">
       <label for="nameInput">Project name</label>
       <input type="text" id="nameInput" maxlength="80" placeholder="named after the video" />
@@ -118,6 +119,7 @@ function mountIdle() {
   els = {
     dropzone: $("dropzone"),
     previewSlot: $("videoPreviewSlot"),
+    lengthWarn: $("lengthWarn"),
     nameInput: $("nameInput"),
     projectsSlot: $("projectsSlot"),
     presetSelect: $("presetSelect"),
@@ -136,6 +138,7 @@ function mountIdle() {
   });
   fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); };
   els.startBtn.addEventListener("click", startJob);
+  els.presetSelect.addEventListener("change", updateLengthWarning);
   if (selectedFile) renderVideoPreview();
   loadProjects();
 }
@@ -228,14 +231,54 @@ function renderVideoPreview() {
     videoSrc(),
     `<span>${selectedFile.name} · ${humanSize(selectedFile.size)}</span><button id="clearBtn">remove</button>`,
   );
+  // The duration decides whether the preset's frames will be close enough together.
+  els.previewSlot.querySelector("video").addEventListener("loadedmetadata", (e) => {
+    selectedDuration = Number.isFinite(e.target.duration) ? e.target.duration : null;
+    updateLengthWarning();
+  });
   $("clearBtn").addEventListener("click", () => {
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
     selectedFile = null;
+    selectedDuration = null;
     els.previewSlot.innerHTML = "";
     els.nameInput.placeholder = "named after the video";
     els.startBtn.disabled = true;
+    updateLengthWarning();
   });
   els.startBtn.disabled = false;
+}
+
+// Presets take a fixed number of frames, so a long video spreads them out. Past
+// ~1.5 s apart they stop overlapping enough for poses: the 9-minute bedroom test
+// failed at 2.8 s, while 0.7 s (desk) and 1.0 s (a 3-minute clip) worked.
+const MAX_FRAME_GAP_S = 1.5;
+let presetInfo = null; // GET /api/presets
+let selectedDuration = null; // seconds, once the preview has read the metadata
+
+fetch("/api/presets").then((r) => (r.ok ? r.json() : null)).then((p) => { presetInfo = p; updateLengthWarning(); }).catch(() => {});
+
+function formatDuration(s) {
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m ? `${m} min ${sec} s` : `${sec} s`;
+}
+
+function updateLengthWarning() {
+  if (currentPanel !== "idle" || !els.lengthWarn) return;
+  const preset = els.presetSelect.value;
+  const frames = presetInfo?.[preset]?.frames;
+  const gap = selectedDuration && frames ? selectedDuration / frames : 0;
+  if (gap <= MAX_FRAME_GAP_S) { els.lengthWarn.innerHTML = ""; return; }
+  const labelOf = (name) => [...els.presetSelect.options].find((o) => o.value === name)?.textContent.split(" —")[0] || name;
+  const label = labelOf(preset);
+  const better = Object.entries(presetInfo)
+    .filter(([name, p]) => name !== preset && selectedDuration / p.frames <= MAX_FRAME_GAP_S)
+    .sort((a, b) => a[1].frames - b[1].frames)[0];
+  els.lengthWarn.innerHTML = `
+    <p><b>This video may be too long for ${escapeHTML(label)}.</b> It runs ${formatDuration(selectedDuration)}, and ${escapeHTML(label)} uses ${frames} frames,
+    so they'd be about ${gap.toFixed(1)} s apart. That's usually too far for the camera positions to be worked out.</p>
+    <p>${better ? `The ${escapeHTML(labelOf(better[0]))} preset (${better[1].frames} frames) keeps them ${(selectedDuration / better[1].frames).toFixed(1)} s apart. Or t` : "T"}rim it to the best 2–3 minutes, or film one video per area.
+    <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a></p>
+  `;
 }
 
 function mountRunning() {

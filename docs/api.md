@@ -2,6 +2,7 @@
 
 ## Endpoints
 
+- `GET /api/presets` — each preset's settings (`frames`, `max_resolution`, `total_steps`, ...). The start screen uses `frames` with the chosen video's length to warn when frames would be more than 1.5 s apart.
 - `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "preset", "gaussians", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
 - `DELETE /api/jobs/{id}` — delete the project and its whole folder, downloads included. 409 if the job is still running (cancel it first).
 - `GET /api/jobs/{id}/disk` — `{"bytes", "reclaimable"}`: the folder's size, and what clean-up would free (0 unless the project finished).

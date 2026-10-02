@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 import shutil
 import time
@@ -35,6 +36,12 @@ async def _run_and_save(job: Job):
         await pipeline.start(job)
     finally:
         projects.save(job)
+
+
+@app.get("/api/presets")
+async def list_presets():
+    """Each preset's settings, so the UI can reason about frame counts."""
+    return {name: dataclasses.asdict(preset) for name, preset in PRESETS.items()}
 
 
 # Plain def, not async: summaries walk each folder for its disk size, so FastAPI
