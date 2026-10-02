@@ -35,7 +35,7 @@ class ProjectPersistenceTests(unittest.TestCase):
         self.assertEqual(state["stage"], "done")
         self.assertEqual(state["artifacts"], artifacts)
         self.assertEqual(projects.summary(loaded), {
-            "id": "a", "name": "Bedroom", "created": 100.0, "stage": "done", "error": None,
+            "id": "a", "name": "Bedroom", "created": 100.0, "stage": "done", "error": None, "failed_stage": None,
             "preset": "high", "gaussians": 1178163, "thumbnail": "/api/jobs/a/files/frames/1.jpg",
             "bytes": (job.work / projects.PROJECT_FILE).stat().st_size,
         })

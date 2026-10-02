@@ -31,9 +31,21 @@ Every event is `event: state` with a full JSON job snapshot:
   "cameras": [{"position": [x,y,z], "rotation": [qw,qx,qy,qz]}],
   "checkpoint": {"url": ".../checkpoints/splat_10000.ply", "step": 10000, "total_steps": 30000},
   "artifacts": [{"name": "scene.ply", "url": "...", "bytes": 123, "gaussians": 135575, "fill_ratio": 46.7}],
-  "error": null
+  "error": null,
+  "failed_stage": null,
+  "failure": null
 }
 ```
+
+When a job fails, `error` keeps the raw message, `failed_stage` names the stage it failed in, and `failure` (from `server/failures.py`) explains it for the person who filmed the room:
+
+```json
+{"stage": "poses", "title": "Couldn't work out where the camera was",
+ "detail": "Only 24 of 200 frames could be placed in 3D, and at least 30% are needed to train. ...",
+ "tips": ["Move slowly and smoothly, ..."], "capture_guide": true}
+```
+
+`capture_guide` is true when the footage is the likely cause; the UI then links `/capture.html`.
 
 `input_url` is the uploaded video, set as soon as the upload lands and served with range
 support so it can be scrubbed. The UI plays it beside the viewer for the whole run; the tab

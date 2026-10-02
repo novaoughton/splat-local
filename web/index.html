@@ -324,6 +324,37 @@
   .project .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
   .project .meta.bad { color: var(--bad); }
 
+  /* ---------- failure explanation ---------- */
+  .failure { display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.55; }
+  .failure p { margin: 0; }
+  .failure .headline { color: var(--bad); font-weight: 600; }
+  .failure .detail { color: var(--text-dim); }
+  .failure .tips-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .failure .tips { margin: 0; padding-left: 18px; color: var(--text-dim); }
+  .failure .tips li { margin: 3px 0; }
+  .failure details { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+  .failure summary { cursor: pointer; }
+  .failure pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 6px 0 0;
+    padding: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    max-height: 200px;
+    overflow: auto;
+  }
+  .guide-link { font-family: var(--font-mono); font-size: 11px; color: var(--accent); text-decoration: none; }
+  .guide-link:hover { text-decoration: underline; }
+
   .center-note { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
   .checkbox-row { display: flex; align-items: center; gap: 6px; }
   .checkbox-row input { accent-color: var(--accent); }

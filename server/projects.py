@@ -12,6 +12,7 @@ import shutil
 import time
 from pathlib import Path
 
+from . import failures
 from .pipeline import TERMINAL_STAGES, Job
 from .presets import DEFAULT_PRESET
 
@@ -57,7 +58,10 @@ def _load(path: Path) -> Job | None:
     job.work = path.parent
     if state.get("stage") not in TERMINAL_STAGES:
         # A mid-run checkpoint URL may point at a preview file that was deleted.
-        state.update(stage="error", error=INTERRUPTED, message=INTERRUPTED, checkpoint=None)
+        state.update(
+            stage="error", error=INTERRUPTED, message=INTERRUPTED, checkpoint=None,
+            failed_stage=state.get("stage"), failure=failures.explain(state.get("stage"), INTERRUPTED),
+        )
     job.update(**state)
     return job
 
@@ -69,7 +73,7 @@ def _unsaved(folder: Path) -> Job:
     job.preset_name = "unknown"
     job.update(
         name=f"Unsaved run {folder.name}", created=folder.stat().st_mtime,
-        stage="error", error=UNSAVED, message=UNSAVED,
+        stage="error", error=UNSAVED, message=UNSAVED, failure=failures.explain(None, UNSAVED),
     )
     return job
 
@@ -123,6 +127,7 @@ def summary(job: Job) -> dict:
         "created": state.get("created"),
         "stage": state["stage"],
         "error": state.get("error"),
+        "failed_stage": state.get("failed_stage"),
         "preset": job.preset_name,
         "gaussians": gaussians,
         "thumbnail": sample[0] if sample else None,

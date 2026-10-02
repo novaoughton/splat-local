@@ -84,6 +84,7 @@ function mountIdle() {
       <div class="hint">Drop a video, or click to browse</div>
       <div class="sub">MP4 · MOV · WEBM</div>
     </div>
+    <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">How to film a room that reconstructs well →</a>
     <div id="videoPreviewSlot"></div>
     <div class="field">
       <label for="nameInput">Project name</label>
@@ -140,7 +141,8 @@ function projectStatus(p) {
   if (p.stage === "cancelled") return "cancelled";
   if (p.stage !== "error") return "running";
   if (p.preset === "unknown") return "no project file";
-  return (p.error || "").startsWith("interrupted") ? "interrupted" : "failed";
+  if ((p.error || "").startsWith("interrupted")) return "interrupted";
+  return p.failed_stage ? `failed at ${STAGE_NAME[p.failed_stage] || p.failed_stage}` : "failed";
 }
 
 function projectMeta(p) {
@@ -284,7 +286,7 @@ function mountError() {
   sidebar.innerHTML = `
     <div class="eyebrow" id="errorEyebrow">error</div>
     <h2 class="panel-title" id="errorTitle">Something went wrong</h2>
-    <div class="center-note" id="errorMsg"></div>
+    <div class="failure" id="errorMsg"></div>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
@@ -363,11 +365,37 @@ function updateDone(state) {
   `).join("") || `<div class="center-note">No artifacts listed.</div>`;
 }
 
+const STAGE_NAME = { frames: "frames", poses: "camera positions", train: "training", export: "export" };
+
 function updateError(state) {
   const cancelled = state.stage === "cancelled";
-  els.eyebrow.textContent = cancelled ? "cancelled" : "reconstruction failed";
+  const f = state.failure;
+  const stage = STAGE_NAME[state.failed_stage] || state.failed_stage;
+  els.eyebrow.textContent = cancelled ? "cancelled"
+    : !stage ? "reconstruction failed"
+    : (state.error || "").startsWith("interrupted") ? `interrupted during ${stage}`
+    : `failed at ${stage}`;
   els.title.textContent = state.name || (cancelled ? "Job cancelled" : "Reconstruction failed");
-  els.msg.textContent = state.error || state.message || (cancelled ? "The job was cancelled." : "An unknown error occurred.");
+
+  // Rebuilt only when the content changes, so an open "technical details" stays open.
+  const raw = state.error || state.message || "";
+  const key = JSON.stringify([cancelled, f, raw]);
+  if (els.msg.dataset.key === key) return;
+  els.msg.dataset.key = key;
+  if (cancelled) {
+    els.msg.innerHTML = `<p class="detail">The job was cancelled.</p>`;
+  } else if (f) {
+    els.msg.innerHTML = `
+      <p class="headline">${escapeHTML(f.title)}</p>
+      <p class="detail">${escapeHTML(f.detail)}</p>
+      ${f.tips?.length ? `<div class="tips-label">Next time</div><ul class="tips">${f.tips.map((t) => `<li>${escapeHTML(t)}</li>`).join("")}</ul>` : ""}
+      ${f.capture_guide ? `<a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Read the capture guide →</a>` : ""}
+      ${raw && raw !== f.detail ? `<details><summary>Technical details</summary><pre>${escapeHTML(raw)}</pre></details>` : ""}
+    `;
+  } else {
+    // A project saved before failures were explained: show what there is.
+    els.msg.innerHTML = `<p class="detail">${escapeHTML(raw || "An unknown error occurred.")}</p>`;
+  }
 }
 
 function updateViewer(state) {
