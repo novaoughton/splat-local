@@ -7,6 +7,10 @@ import * as THREE from "three";
 import { SplatMesh } from "@sparkjsdev/spark";
 import { createRig, LOD, percentile } from "splat-viewer/core.js";
 import { parsePLYAsync } from "splat-viewer/ply.js";
+import { estimateUp } from "./level.js";
+
+// The rig's default: COLMAP is +Y down, so the world group is turned 180° about X.
+const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
 
 export function createViewer(canvas) {
   const rig = createRig(canvas);
@@ -16,6 +20,22 @@ export function createViewer(canvas) {
   let frustaVisible = true;
   let loading = false, nextUrl = null, currentCheckpointUrl = null;
   let home = null; // the framing fitToPositions chose, for resetView()
+  let lastPositions = null; // the sparse cloud, to reframe once the scene is levelled
+
+  // Stand the reconstruction upright: turn the world so the up direction the
+  // cameras imply (see level.js) becomes the viewer's vertical. Navigation —
+  // orbit, and the arrow-key turn — works around that vertical, so without
+  // this a tilted room makes every turn tilt the view as well.
+  function levelWorld(up) {
+    const q = FLIP.clone();
+    if (up) {
+      const u = new THREE.Vector3(...up).applyQuaternion(FLIP).normalize();
+      q.premultiply(new THREE.Quaternion().setFromUnitVectors(u, new THREE.Vector3(0, 1, 0)));
+    }
+    world.quaternion.copy(q);
+    world.updateMatrixWorld(true);
+    rig.invalidate();
+  }
 
   // Drop a layer and free its GPU memory. SplatMesh owns its buffers and cleans
   // up after itself; plain three.js objects need their geometry and material
@@ -29,8 +49,10 @@ export function createViewer(canvas) {
     return null;
   }
 
-  // Frame the camera on the parsed (pre-flip) point positions, clamping outliers.
+  // Frame the camera on the parsed (reconstruction-space) point positions,
+  // clamping outliers.
   function fitToPositions(positions) {
+    lastPositions = positions;
     const n = positions.length / 3;
     const xs = new Array(n), ys = new Array(n), zs = new Array(n);
     for (let i = 0; i < n; i++) {
@@ -40,8 +62,10 @@ export function createViewer(canvas) {
     }
     const lo = [percentile(xs, 0.05), percentile(ys, 0.05), percentile(zs, 0.05)];
     const hi = [percentile(xs, 0.95), percentile(ys, 0.95), percentile(zs, 0.95)];
-    // world group is rotated 180deg about X: (x,y,z) -> (x,-y,-z)
-    const cx = (lo[0] + hi[0]) / 2, cy = -(lo[1] + hi[1]) / 2, cz = -(lo[2] + hi[2]) / 2;
+    // The centre in viewer space, through the world group's flip and levelling.
+    const { x: cx, y: cy, z: cz } = new THREE.Vector3(
+      (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2,
+    ).applyMatrix4(world.matrixWorld);
     const size = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.05);
     rig.radius = size / 2;
 
@@ -94,6 +118,8 @@ export function createViewer(canvas) {
 
   function setCameras(cameras) {
     frusta = discard(frusta);
+    levelWorld(estimateUp(cameras));
+    if (lastPositions) fitToPositions(lastPositions); // reframe in the levelled scene
     if (!cameras || !cameras.length) return;
     const d = Math.max(rig.radius * 0.06, 0.05), hw = d * 0.5, hh = d * 0.375;
     const corners = [[-hw, -hh, -d], [hw, -hh, -d], [hw, hh, -d], [-hw, hh, -d]];
@@ -161,6 +187,8 @@ export function createViewer(canvas) {
     nextUrl = null;
     loading = false;
     home = null;
+    lastPositions = null;
+    levelWorld(null);
     rig.resetView();
   }
 
