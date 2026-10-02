@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import presets
 
-JOBS_DIR = Path("jobs")
+JOBS_DIR = Path(os.environ.get("SPLAT_JOBS_DIR", "jobs"))
 
 TERMINAL_STAGES = ("done", "error", "cancelled")
 

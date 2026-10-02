@@ -2,6 +2,7 @@
 # Setup for Splat Local on Apple Silicon macOS.
 set -euo pipefail
 cd "$(dirname "$0")"
+[[ -f env.sh ]] && source env.sh
 
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1; }
@@ -14,19 +15,22 @@ say "Syncing Python environment (fastapi, pycolmap, sharp-frames...)"
 uv sync
 
 # Brush splat trainer: prefer a from-source build (newer quality flags), else prebuilt release.
-if [[ ! -x vendor/brush_src/target/release/brush && ! -x vendor/brush ]]; then
+BRUSH_SRC_DIR="${BRUSH_SRC_DIR:-vendor/brush_src}"
+BRUSH_PREBUILT="${BRUSH_PREBUILT:-vendor/brush}"
+if [[ ! -x "$BRUSH_SRC_DIR/target/release/brush" && ! -x "$BRUSH_PREBUILT" ]]; then
   if need cargo; then
     say "Building Brush from source (one-time, ~5-10 min)"
-    [[ -d vendor/brush_src ]] || git clone --depth 1 https://github.com/ArthurBrussee/brush vendor/brush_src
-    (cd vendor/brush_src && cargo build --release -p brush-app) || true
+    [[ -d "$BRUSH_SRC_DIR" ]] || git clone --depth 1 https://github.com/ArthurBrussee/brush "$BRUSH_SRC_DIR"
+    (cd "$BRUSH_SRC_DIR" && cargo build --release -p brush-app) || true
   fi
-  if [[ ! -x vendor/brush_src/target/release/brush ]]; then
+  if [[ ! -x "$BRUSH_SRC_DIR/target/release/brush" ]]; then
     say "Downloading Brush v0.3.0 prebuilt binary"
+    prebuilt_dir="$(dirname "$BRUSH_PREBUILT")"
     curl -sL https://github.com/ArthurBrussee/brush/releases/download/v0.3.0/brush-app-aarch64-apple-darwin.tar.xz |
-      tar xJ -C vendor
-    mv vendor/brush-app-aarch64-apple-darwin/brush_app vendor/brush
-    rm -rf vendor/brush-app-aarch64-apple-darwin
-    chmod +x vendor/brush
+      tar xJ -C "$prebuilt_dir"
+    mv "$prebuilt_dir/brush-app-aarch64-apple-darwin/brush_app" "$BRUSH_PREBUILT"
+    rm -rf "$prebuilt_dir/brush-app-aarch64-apple-darwin"
+    chmod +x "$BRUSH_PREBUILT"
   fi
 fi
 
