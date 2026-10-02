@@ -15,3 +15,7 @@ vendor/brush_browser_src/
 !site/scenes/*.spz
 .playwright-mcp/
 _site/
+# Planning docs and tracker stay private on Google Drive; this fork is public.
+Planning/
+# Raw capture footage stays out of git.
+test_video_upload/
