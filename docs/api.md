@@ -59,7 +59,17 @@ Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and t
 Each job folder carries a `project.json`, written when the job starts and again when it ends:
 
 ```json
-{"schema": 1, "id": "abc123", "preset": "high", "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
+{"schema": 1, "id": "abc123", "preset": "high", "preset_settings": {"frames": 200, "total_steps": 18000, "...": "..."},
+ "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
 ```
+
+`preset_settings` records the preset's values as the run used them. `state.versions` records the tools that made the result, probed when the job starts; a probe that fails records `null`:
+
+```json
+{"splat_local": "892e2c4", "python": "3.12.15", "ffmpeg": "8.1.2", "sharp_frames": "0.3.1", "pycolmap": "4.1.0",
+ "colmap": "COLMAP 4.1.0", "brush": "brush-cli 1.0.0", "splat_transform": "splat-transform v3.9.0 (435b972)"}
+```
+
+(`da3_model` is added for Depth Anything 3 runs.) splat-transform is pinned (`SPLAT_TRANSFORM_VERSION` in `server/stages/export.py`), so its version only changes when the pin does.
 
 On startup the server loads every `jobs/*/project.json` back into its job registry, so finished projects stay listable and their files stay servable across restarts. A project saved mid-run (the app stopped before it finished) loads as `stage: "error"` with an "interrupted" error. A folder with no readable `project.json` (one from before saved projects, a failed upload, or a preset that no longer exists) loads as an "Unsaved run" with `preset: "unknown"`, so it still shows up and can be deleted.

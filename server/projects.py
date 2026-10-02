@@ -5,6 +5,7 @@ snapshot of it, written when the job starts and again when it ends; on startup
 every job folder is loaded back, so its results stay reachable and its disk
 space can be reclaimed from the app.
 """
+import dataclasses
 import json
 import os
 import shutil
@@ -34,6 +35,8 @@ def save(job: Job) -> None:
         "schema": SCHEMA,
         "id": job.id,
         "preset": job.preset_name,
+        # The values the run used, in case the preset is retuned later.
+        "preset_settings": dataclasses.asdict(job.preset),
         "pose_backend": job.pose_backend,
         "saved": time.time(),
         "state": state,

@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import pipeline, projects
+from . import pipeline, projects, versions
 from .presets import DEFAULT_PRESET, PRESETS
 from .pipeline import Job
 
@@ -25,6 +25,13 @@ _background_tasks: set[asyncio.Task] = set()
 
 async def _run_and_save(job: Job):
     try:
+        # Probed off the event loop: the npx and brush calls take a second or two.
+        try:
+            found = await asyncio.to_thread(versions.collect, job.pose_backend)
+        except Exception:
+            found = None  # a version probe must never stop the job itself
+        job.update(versions=found)
+        projects.save(job)
         await pipeline.start(job)
     finally:
         projects.save(job)

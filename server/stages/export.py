@@ -7,7 +7,10 @@ from tempfile import TemporaryDirectory
 
 from ..pipeline import JobCancelled, run_subprocess
 
-_NPX_CMD = ["npx", "--yes", "@playcanvas/splat-transform"]
+# Pinned so an npm release can't change exports between runs. Keep setup.sh's
+# priming line on the same version.
+SPLAT_TRANSFORM_VERSION = "3.9.0"
+_NPX_CMD = ["npx", "--yes", f"@playcanvas/splat-transform@{SPLAT_TRANSFORM_VERSION}"]
 
 # Ceilings, not expectations: a 136K-splat scene converts in seconds and stats take ~0.1s.
 # They exist so a wedged splat-transform can never sit on a job forever.

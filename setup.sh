@@ -37,7 +37,8 @@ fi
 # Optional: splat cleanup/compression (.spz/.sog exports)
 if need npm; then
   say "Priming splat-transform (optional, for cleanup + .spz/.sog export)"
-  npx --yes @playcanvas/splat-transform --version >/dev/null 2>&1 || true
+  # Same version as SPLAT_TRANSFORM_VERSION in server/stages/export.py
+  npx --yes @playcanvas/splat-transform@3.9.0 --version >/dev/null 2>&1 || true
 fi
 
 say "Done. Start the app with:  ./run.sh   (then open http://127.0.0.1:8000)"
