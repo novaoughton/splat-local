@@ -29,6 +29,10 @@ let lastCamerasCount = 0;
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
 
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 function humanSize(bytes) {
   if (bytes == null) return "";
   const units = ["B", "KB", "MB", "GB"];
@@ -81,6 +85,10 @@ function mountIdle() {
     </div>
     <div id="videoPreviewSlot"></div>
     <div class="field">
+      <label for="nameInput">Project name</label>
+      <input type="text" id="nameInput" maxlength="80" placeholder="named after the video" />
+    </div>
+    <div class="field">
       <label>Preset</label>
       <select id="presetSelect">
         <option value="preview">Preview — ~8 min</option>
@@ -97,10 +105,13 @@ function mountIdle() {
     </div>
     <button class="btn btn-primary" id="startBtn" disabled>Start reconstruction</button>
     <div class="inline-msg" id="startMsg"></div>
+    <div id="projectsSlot"></div>
   `;
   els = {
     dropzone: $("dropzone"),
     previewSlot: $("videoPreviewSlot"),
+    nameInput: $("nameInput"),
+    projectsSlot: $("projectsSlot"),
     presetSelect: $("presetSelect"),
     poseSelect: $("poseSelect"),
     startBtn: $("startBtn"),
@@ -118,6 +129,48 @@ function mountIdle() {
   fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); };
   els.startBtn.addEventListener("click", startJob);
   if (selectedFile) renderVideoPreview();
+  loadProjects();
+}
+
+// Saved projects, newest first. Finished ones reopen in the viewer with their
+// downloads; a running one reattaches to its live progress.
+const PROJECT_STATUS = { done: "", error: "failed", cancelled: "cancelled" };
+
+function projectMeta(p) {
+  const parts = [];
+  if (p.created) parts.push(new Date(p.created * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
+  parts.push(p.preset);
+  if (p.gaussians) parts.push(`${(p.gaussians / 1e6).toFixed(2)}M splats`);
+  const status = p.stage in PROJECT_STATUS ? PROJECT_STATUS[p.stage] : "running";
+  if (status) parts.push(status);
+  return parts.join(" · ");
+}
+
+function loadProjects() {
+  fetch("/api/jobs")
+    .then((r) => (r.ok ? r.json() : []))
+    .then((list) => {
+      if (currentPanel !== "idle" || !list.length) return;
+      els.projectsSlot.innerHTML = `
+        <div class="field">
+          <label>Past projects</label>
+          <div class="project-list">
+            ${list.map((p) => `
+              <button class="project" data-id="${escapeHTML(p.id)}">
+                ${p.thumbnail ? `<img src="${escapeHTML(p.thumbnail)}" alt="" loading="lazy" />` : `<span class="thumb-empty"></span>`}
+                <span class="text">
+                  <span class="name">${escapeHTML(p.name)}</span>
+                  <span class="meta${p.stage === "error" || p.stage === "cancelled" ? " bad" : ""}">${escapeHTML(projectMeta(p))}</span>
+                </span>
+              </button>`).join("")}
+          </div>
+        </div>
+      `;
+      els.projectsSlot.querySelectorAll(".project").forEach((b) => {
+        b.addEventListener("click", () => attach(b.dataset.id));
+      });
+    })
+    .catch(() => {});
 }
 
 function handleFile(file) {
@@ -129,6 +182,7 @@ function handleFile(file) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   selectedFile = file;
   objectUrl = URL.createObjectURL(file);
+  els.nameInput.placeholder = file.name.replace(/\.[^.]+$/, "");
   renderVideoPreview();
 }
 
@@ -141,6 +195,7 @@ function renderVideoPreview() {
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
     selectedFile = null;
     els.previewSlot.innerHTML = "";
+    els.nameInput.placeholder = "named after the video";
     els.startBtn.disabled = true;
   });
   els.startBtn.disabled = false;
@@ -183,12 +238,12 @@ function mountRunning() {
 function mountDone() {
   sidebar.innerHTML = `
     <div class="eyebrow">reconstruction complete</div>
-    <h2 class="panel-title">Scene ready</h2>
+    <h2 class="panel-title" id="doneTitle">Scene ready</h2>
     <div class="artifact-list" id="artifactList"></div>
     <hr class="hr" />
     <button class="btn" id="newVideoBtn">New video</button>
   `;
-  els = { artifactList: $("artifactList") };
+  els = { artifactList: $("artifactList"), title: $("doneTitle") };
   $("newVideoBtn").addEventListener("click", resetToIdle);
 }
 
@@ -250,6 +305,7 @@ function updateRunning(state) {
 }
 
 function updateDone(state) {
+  if (state.name) els.title.textContent = state.name;
   els.artifactList.innerHTML = (state.artifacts || []).map((a) => `
     <div class="artifact">
       <div><div class="name">${a.name}</div><div class="size">${humanSize(a.bytes)}</div></div>
@@ -315,6 +371,7 @@ function startJob() {
   form.append("video", selectedFile);
   form.append("preset", els.presetSelect.value);
   form.append("pose_backend", els.poseSelect.value);
+  form.append("name", els.nameInput.value);
   fetch("/api/jobs", { method: "POST", body: form })
     .then(async (r) => {
       if (r.status === 409) throw new Error("A job is already running.");
@@ -322,21 +379,27 @@ function startJob() {
       return r.json();
     })
     .then(({ job_id }) => {
-      jobId = job_id;
-      sessionStorage.setItem("vts_job", job_id);
-      seenFrames = new Set();
-      lastSparseUrl = null;
-      lastCheckpointUrl = null;
-      checkpointCount = 0;
-      lastCamerasCount = 0;
-      mount("running");
+      attach(job_id);
       setStatusPill("frames");
-      connectEvents(job_id);
     })
     .catch((err) => {
       els.startBtn.disabled = false;
       els.startMsg.textContent = err.message;
     });
+}
+
+// Follow a job's state from scratch: a new upload, a saved project, or a run
+// already in progress.
+function attach(id) {
+  jobId = id;
+  sessionStorage.setItem("vts_job", id);
+  seenFrames = new Set();
+  lastSparseUrl = null;
+  lastCheckpointUrl = null;
+  checkpointCount = 0;
+  lastCamerasCount = 0;
+  mount("running");
+  connectEvents(id);
 }
 
 function resetToIdle() {
@@ -371,10 +434,7 @@ function resetToIdle() {
     } catch { /* older server without the endpoint */ }
   }
   if (saved) {
-    jobId = saved;
-    sessionStorage.setItem("vts_job", saved);
-    mount("running");
-    connectEvents(saved);
+    attach(saved);
   } else {
     mount("idle");
   }

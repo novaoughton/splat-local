@@ -2,7 +2,8 @@
 
 ## Endpoints
 
-- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`). Returns `{"job_id": str}`. 409 if a job is already running.
+- `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "preset", "gaussians", "thumbnail"}]`. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
+- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension). Returns `{"job_id": str}`. 409 if a job is already running.
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
 - `GET /api/jobs/{id}/events` — SSE stream. On connect, emits current state, then updates.
@@ -18,6 +19,8 @@ Every event is `event: state` with a full JSON job snapshot:
 ```json
 {
   "job_id": "abc123",
+  "name": "Living room",
+  "created": 1790971275.0,
   "stage": "frames|poses|train|export|done|error|cancelled",
   "progress": 0.42,
   "message": "human-readable status line",
@@ -48,4 +51,14 @@ Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and t
 
 ## Job directory layout
 
-`jobs/{id}/`: `input.<ext>`, `frames/*.jpg`, `colmap/` (db + sparse), `dataset/` (undistorted images + sparse for Brush), `sparse.ply`, `checkpoints/*.ply` (Brush's `export_*.ply` originals, kept; plus at most two transient `preview_*.ply` stream copies while training runs), `exports/*`
+`jobs/{id}/`: `project.json`, `input.<ext>`, `frames/*.jpg`, `colmap/` (db + sparse), `dataset/` (undistorted images + sparse for Brush), `sparse.ply`, `checkpoints/*.ply` (Brush's `export_*.ply` originals, kept; plus at most two transient `preview_*.ply` stream copies while training runs), `exports/*`
+
+## Saved projects
+
+Each job folder carries a `project.json`, written when the job starts and again when it ends:
+
+```json
+{"schema": 1, "id": "abc123", "preset": "high", "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
+```
+
+On startup the server loads every `jobs/*/project.json` back into its job registry, so finished projects stay listable and their files stay servable across restarts. A project saved mid-run (the app stopped before it finished) loads as `stage: "error"` with an "interrupted" error. Folders without a `project.json`, unreadable files, and projects whose preset no longer exists are skipped.
