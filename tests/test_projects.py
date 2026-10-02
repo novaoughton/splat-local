@@ -111,6 +111,55 @@ class ProjectPersistenceTests(unittest.TestCase):
         projects.save(job)
         self.assertEqual(sorted(p.name for p in job.work.iterdir()), [projects.PROJECT_FILE])
 
+    def make_finished_job(self, job_id, checkpoint_file="exports/scene-view.sog"):
+        job = self.make_job(job_id, stage="done")
+        for rel, size in [
+            ("input.mov", 70), ("sparse.ply", 20), ("exports/scene.ply", 40), ("exports/scene-view.sog", 15),
+            ("checkpoints/export_00500.ply", 300), ("checkpoints/export_01000.ply", 500),
+            ("colmap/database.db", 160), ("colmap/sparse/0/images.bin", 5),
+            ("dataset/images/frame_00001.jpg", 7), ("frames/frame_00001.jpg", 3),
+            ("frames/frame_00002.jpg", 3), ("frames/frame_00003.jpg", 3),
+        ]:
+            path = job.work / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x" * size)
+        job.update(
+            frames={"count": 3, "sample": [job.file_url("frames/frame_00001.jpg")]},
+            checkpoint={"url": job.file_url(checkpoint_file), "step": 1000, "total_steps": 1000},
+        )
+        projects.save(job)
+        return job
+
+    def test_clean_keeps_what_the_project_shows(self):
+        job = self.make_finished_job("h")
+        working = 300 + 500 + 160 + 5 + 7 + 3 + 3  # snapshots, COLMAP, dataset, two non-thumbnail frames
+        self.assertEqual(projects.reclaimable(job), working)
+
+        self.assertEqual(projects.clean(job), working)
+        left = sorted(str(p.relative_to(job.work)) for p in job.work.rglob("*") if p.is_file())
+        self.assertEqual(left, [
+            "exports/scene-view.sog", "exports/scene.ply", "frames/frame_00001.jpg",
+            "input.mov", projects.PROJECT_FILE, "sparse.ply",
+        ])
+        self.assertEqual(projects.reclaimable(job), 0)
+        [loaded] = projects.load_all(self.jobs_dir)
+        self.assertTrue(loaded.snapshot()[0]["cleaned"])
+        self.assertEqual(loaded.snapshot()[0]["checkpoint"]["url"], job.file_url("exports/scene-view.sog"))
+
+    def test_clean_repoints_a_viewer_left_on_a_checkpoint(self):
+        # Without Node there is no .sog: the viewer shows the final checkpoint itself.
+        job = self.make_finished_job("i", checkpoint_file="checkpoints/export_01000.ply")
+        projects.clean(job)
+        self.assertEqual(job.snapshot()[0]["checkpoint"]["url"], job.file_url("exports/scene.ply"))
+
+    def test_only_finished_projects_can_be_cleaned(self):
+        job = self.make_finished_job("j")
+        job.update(stage="error")
+        self.assertEqual(projects.reclaimable(job), 0)
+        with self.assertRaises(ValueError):
+            projects.clean(job)
+        self.assertTrue((job.work / "checkpoints").exists())
+
     def test_clean_name(self):
         self.assertEqual(projects.clean_name("  my   room \n", "x"), "my room")
         self.assertEqual(projects.clean_name("", "IMG_0042"), "IMG_0042")

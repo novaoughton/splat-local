@@ -282,11 +282,48 @@ function mountDone() {
     <div class="eyebrow">reconstruction complete</div>
     <h2 class="panel-title" id="doneTitle">Scene ready</h2>
     <div class="artifact-list" id="artifactList"></div>
+    <div class="disk-note" id="diskNote"></div>
+    <button class="btn" id="cleanBtn" hidden></button>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
-  els = { artifactList: $("artifactList"), title: $("doneTitle") };
+  els = { artifactList: $("artifactList"), title: $("doneTitle"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn") };
   wireProjectButtons();
+  els.cleanBtn.addEventListener("click", cleanProject);
+  loadDisk();
+}
+
+// Disk use for the open project, and the clean-up offer when there's
+// working data worth removing (training snapshots dominate: ~5 GB a run).
+const CLEAN_THRESHOLD = 10 * 1024 * 1024;
+
+async function loadDisk() {
+  const id = jobId;
+  const disk = await fetch(`/api/jobs/${encodeURIComponent(id)}/disk`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!disk || id !== jobId || currentPanel !== "done") return;
+  els.diskNote.textContent = `Using ${humanSize(disk.bytes)} on disk.`;
+  els.cleanBtn.hidden = disk.reclaimable < CLEAN_THRESHOLD;
+  els.cleanBtn.textContent = `Clean up working files · frees ${humanSize(disk.reclaimable)}`;
+  els.cleanBtn.dataset.reclaimable = disk.reclaimable;
+}
+
+async function cleanProject() {
+  const freeing = humanSize(Number(els.cleanBtn.dataset.reclaimable));
+  const name = projectName || "this project";
+  if (!confirm(`Clean up "${name}"?\n\nThis frees ${freeing} by removing training snapshots, the camera-solving data and spare frames. The scene, the downloads and the source video stay, so it opens exactly as before. It can't be retrained without starting again from the video.`)) return;
+  els.cleanBtn.disabled = true;
+  els.cleanBtn.textContent = "Cleaning up…";
+  const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/clean`, { method: "POST" }).catch(() => null);
+  if (!r || !r.ok) {
+    const detail = r ? (await r.json().catch(() => ({}))).detail : null;
+    alert(`Couldn't clean up "${name}": ${detail || "the app didn't respond"}.`);
+    els.cleanBtn.disabled = false;
+    loadDisk();
+    return;
+  }
+  const { freed, bytes } = await r.json();
+  els.cleanBtn.hidden = true;
+  els.diskNote.textContent = `Cleaned up: freed ${humanSize(freed)}. Now using ${humanSize(bytes)} on disk.`;
 }
 
 function mountError() {

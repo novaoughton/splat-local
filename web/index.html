@@ -43,6 +43,7 @@
     overflow: hidden;
   }
   button, select, input { font: inherit; color: inherit; }
+  [hidden] { display: none !important; } /* class display rules (.btn, .frusta-toggle) would override it */
 
   /* ---------- topbar ---------- */
   .topbar {
@@ -121,7 +122,6 @@
     cursor: pointer;
   }
   .view-btn:hover { color: var(--text); border-color: var(--accent); }
-  .frusta-toggle[hidden] { display: none; } /* display:flex below would override [hidden] */
   .frusta-toggle {
     position: absolute;
     top: 14px;
@@ -338,6 +338,9 @@
   .project .name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .project .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
   .project .meta.bad { color: var(--bad); }
+
+  .disk-note { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .disk-note:empty { display: none; }
 
   /* ---------- failure explanation ---------- */
   .failure { display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.55; }

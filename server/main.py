@@ -46,6 +46,30 @@ def list_jobs():
     return [projects.summary(job) for job in jobs]
 
 
+@app.get("/api/jobs/{job_id}/disk")
+def job_disk(job_id: str):
+    """Disk use, and how much "clean up" would free."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return {"bytes": projects.disk_bytes(job.work), "reclaimable": projects.reclaimable(job)}
+
+
+@app.post("/api/jobs/{job_id}/clean")
+async def clean_job(job_id: str):
+    """Remove a finished project's working files, keeping everything it shows."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.snapshot()[0]["stage"] != "done":
+        raise HTTPException(409, "only a finished project can be cleaned up")
+    try:
+        freed = await asyncio.to_thread(projects.clean, job)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return {"freed": freed, "bytes": projects.disk_bytes(job.work)}
+
+
 @app.delete("/api/jobs/{job_id}")
 async def delete_job(job_id: str):
     """Delete a project and its whole folder, downloads included."""
