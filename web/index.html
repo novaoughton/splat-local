@@ -106,6 +106,7 @@
   }
   .viewport-hud .line { margin-bottom: 3px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .viewport-hud .line b { color: var(--text); font-weight: 600; }
+  .frusta-toggle[hidden] { display: none; } /* display:flex below would override [hidden] */
   .frusta-toggle {
     position: absolute;
     top: 14px;
@@ -161,7 +162,7 @@
     color: var(--text-dim);
     text-transform: uppercase;
   }
-  select {
+  select, input[type="text"] {
     background: var(--panel-2);
     border: 1px solid var(--border-hi);
     border-radius: 3px;
@@ -169,7 +170,8 @@
     font-family: var(--font-mono);
     font-size: 12px;
   }
-  select:focus-visible, button:focus-visible, .dropzone:focus-visible {
+  input[type="text"]::placeholder { color: var(--text-faint); }
+  select:focus-visible, button:focus-visible, .dropzone:focus-visible, input[type="text"]:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
@@ -182,6 +184,7 @@
     border-radius: 3px;
     border: 1px solid var(--border-hi);
     background: var(--panel-2);
+    color: var(--text); /* <a class="btn"> download links would otherwise be link-blue */
     cursor: pointer;
     text-align: center;
     text-decoration: none;
@@ -273,6 +276,53 @@
   .artifact .name { font-family: var(--font-mono); font-size: 12px; }
   .artifact .size { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
   .artifact a.btn { padding: 6px 10px; font-size: 10px; }
+
+  /* ---------- saved projects ---------- */
+  .project-list { display: flex; flex-direction: column; gap: 6px; }
+  .project {
+    display: flex;
+    align-items: stretch;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .project:has(.project-open:hover) { border-color: var(--accent); }
+  .project:has(.project-delete:hover) { border-color: var(--bad); }
+  .project-open {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .project-delete {
+    flex: none;
+    width: 34px;
+    background: none;
+    border: none;
+    border-left: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .project-delete:hover { color: var(--bad); }
+  .project img, .project .thumb-empty {
+    width: 54px;
+    height: 38px;
+    object-fit: cover;
+    border-radius: 2px;
+    flex: none;
+    background: var(--bg);
+  }
+  .project .text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .project .name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
+  .project .meta.bad { color: var(--bad); }
 
   .center-note { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
   .checkbox-row { display: flex; align-items: center; gap: 6px; }

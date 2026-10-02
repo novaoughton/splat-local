@@ -15,6 +15,7 @@ const STAGES = ["frames", "poses", "train", "export"];
 const STAGE_LABEL = { frames: "Frames", poses: "Poses", train: "Train", export: "Export" };
 
 let jobId = null;
+let projectName = null; // the open project's name, for the delete confirmation
 let es = null;
 let selectedFile = null;
 let objectUrl = null; // blob URL for selectedFile; revoked when it is replaced or cleared
@@ -28,6 +29,10 @@ let checkpointCount = 0;
 let lastCamerasCount = 0;
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
 
 function humanSize(bytes) {
   if (bytes == null) return "";
@@ -81,6 +86,10 @@ function mountIdle() {
     </div>
     <div id="videoPreviewSlot"></div>
     <div class="field">
+      <label for="nameInput">Project name</label>
+      <input type="text" id="nameInput" maxlength="80" placeholder="named after the video" />
+    </div>
+    <div class="field">
       <label>Preset</label>
       <select id="presetSelect">
         <option value="preview">Preview — ~8 min</option>
@@ -97,10 +106,13 @@ function mountIdle() {
     </div>
     <button class="btn btn-primary" id="startBtn" disabled>Start reconstruction</button>
     <div class="inline-msg" id="startMsg"></div>
+    <div id="projectsSlot"></div>
   `;
   els = {
     dropzone: $("dropzone"),
     previewSlot: $("videoPreviewSlot"),
+    nameInput: $("nameInput"),
+    projectsSlot: $("projectsSlot"),
     presetSelect: $("presetSelect"),
     poseSelect: $("poseSelect"),
     startBtn: $("startBtn"),
@@ -118,6 +130,76 @@ function mountIdle() {
   fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); };
   els.startBtn.addEventListener("click", startJob);
   if (selectedFile) renderVideoPreview();
+  loadProjects();
+}
+
+// Saved projects, newest first. Finished ones reopen in the viewer with their
+// downloads; a running one reattaches to its live progress.
+function projectStatus(p) {
+  if (p.stage === "done") return "";
+  if (p.stage === "cancelled") return "cancelled";
+  if (p.stage !== "error") return "running";
+  if (p.preset === "unknown") return "no project file";
+  return (p.error || "").startsWith("interrupted") ? "interrupted" : "failed";
+}
+
+function projectMeta(p) {
+  const parts = [];
+  if (p.created) parts.push(new Date(p.created * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
+  if (p.preset !== "unknown") parts.push(p.preset);
+  if (p.gaussians) parts.push(`${(p.gaussians / 1e6).toFixed(2)}M splats`);
+  if (p.bytes != null) parts.push(humanSize(p.bytes));
+  const status = projectStatus(p);
+  if (status) parts.push(status);
+  return parts.join(" · ");
+}
+
+function loadProjects() {
+  fetch("/api/jobs")
+    .then((r) => (r.ok ? r.json() : []))
+    .then((list) => {
+      if (currentPanel !== "idle") return;
+      if (!list.length) { els.projectsSlot.innerHTML = ""; return; }
+      els.projectsSlot.innerHTML = `
+        <div class="field">
+          <label>Past projects</label>
+          <div class="project-list">
+            ${list.map((p) => `
+              <div class="project">
+                <button class="project-open" data-id="${escapeHTML(p.id)}">
+                  ${p.thumbnail ? `<img src="${escapeHTML(p.thumbnail)}" alt="" loading="lazy" />` : `<span class="thumb-empty"></span>`}
+                  <span class="text">
+                    <span class="name">${escapeHTML(p.name)}</span>
+                    <span class="meta${p.stage === "done" ? "" : " bad"}">${escapeHTML(projectMeta(p))}</span>
+                  </span>
+                </button>
+                <button class="project-delete" data-id="${escapeHTML(p.id)}" title="Delete project" aria-label="Delete ${escapeHTML(p.name)}">✕</button>
+              </div>`).join("")}
+          </div>
+        </div>
+      `;
+      const byId = Object.fromEntries(list.map((p) => [p.id, p]));
+      els.projectsSlot.querySelectorAll(".project-open").forEach((b) => {
+        b.addEventListener("click", () => attach(b.dataset.id));
+      });
+      els.projectsSlot.querySelectorAll(".project-delete").forEach((b) => {
+        const p = byId[b.dataset.id];
+        b.addEventListener("click", () => deleteProject(p.id, p.name, p.bytes).then((ok) => ok && loadProjects()));
+      });
+    })
+    .catch(() => {});
+}
+
+// Deletes the whole project folder — downloads included — after a confirm.
+// Resolves true once it is gone.
+async function deleteProject(id, name, bytes) {
+  const size = bytes != null ? ` frees ${humanSize(bytes)} and` : "";
+  if (!confirm(`Delete "${name}"?\n\nThis${size} removes its folder from disk, including the downloadable scene files. It can't be undone.`)) return false;
+  const r = await fetch(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => null);
+  if (r && r.ok) return true;
+  const detail = r ? (await r.json().catch(() => ({}))).detail : null;
+  alert(`Couldn't delete "${name}": ${detail || "the app didn't respond"}.`);
+  return false;
 }
 
 function handleFile(file) {
@@ -129,6 +211,7 @@ function handleFile(file) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   selectedFile = file;
   objectUrl = URL.createObjectURL(file);
+  els.nameInput.placeholder = file.name.replace(/\.[^.]+$/, "");
   renderVideoPreview();
 }
 
@@ -141,6 +224,7 @@ function renderVideoPreview() {
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
     selectedFile = null;
     els.previewSlot.innerHTML = "";
+    els.nameInput.placeholder = "named after the video";
     els.startBtn.disabled = true;
   });
   els.startBtn.disabled = false;
@@ -162,8 +246,12 @@ function mountRunning() {
     <div class="status-msg" id="statusMsg">—</div>
     <div id="filmstripSlot"></div>
     <hr class="hr" />
+    <button class="btn" id="closeBtn">Back to projects</button>
     <button class="btn btn-danger" id="cancelBtn">Cancel job</button>
   `;
+  // Leaves the job running: it stays in the project list, and reopening it
+  // reattaches to its live progress.
+  $("closeBtn").addEventListener("click", resetToIdle);
   els = {
     sourceSlot: $("sourceSlot"),
     tracker: $("stageTracker"),
@@ -183,13 +271,13 @@ function mountRunning() {
 function mountDone() {
   sidebar.innerHTML = `
     <div class="eyebrow">reconstruction complete</div>
-    <h2 class="panel-title">Scene ready</h2>
+    <h2 class="panel-title" id="doneTitle">Scene ready</h2>
     <div class="artifact-list" id="artifactList"></div>
     <hr class="hr" />
-    <button class="btn" id="newVideoBtn">New video</button>
+    ${projectButtonsHTML()}
   `;
-  els = { artifactList: $("artifactList") };
-  $("newVideoBtn").addEventListener("click", resetToIdle);
+  els = { artifactList: $("artifactList"), title: $("doneTitle") };
+  wireProjectButtons();
 }
 
 function mountError() {
@@ -197,10 +285,26 @@ function mountError() {
     <div class="eyebrow" id="errorEyebrow">error</div>
     <h2 class="panel-title" id="errorTitle">Something went wrong</h2>
     <div class="center-note" id="errorMsg"></div>
-    <button class="btn" id="resetBtn">Reset</button>
+    <hr class="hr" />
+    ${projectButtonsHTML()}
   `;
   els = { title: $("errorTitle"), msg: $("errorMsg"), eyebrow: $("errorEyebrow") };
-  $("resetBtn").addEventListener("click", resetToIdle);
+  wireProjectButtons();
+}
+
+// Close and Delete, shared by the finished and failed panels.
+function projectButtonsHTML() {
+  return `
+    <button class="btn" id="closeBtn">Close project</button>
+    <button class="btn btn-danger" id="deleteBtn">Delete project</button>
+  `;
+}
+
+function wireProjectButtons() {
+  $("closeBtn").addEventListener("click", resetToIdle);
+  $("deleteBtn").addEventListener("click", async () => {
+    if (await deleteProject(jobId, projectName || "this project", null)) resetToIdle();
+  });
 }
 
 // ------------------------------------------------------------- updating ----
@@ -250,6 +354,7 @@ function updateRunning(state) {
 }
 
 function updateDone(state) {
+  if (state.name) els.title.textContent = state.name;
   els.artifactList.innerHTML = (state.artifacts || []).map((a) => `
     <div class="artifact">
       <div><div class="name">${a.name}</div><div class="size">${humanSize(a.bytes)}</div></div>
@@ -260,8 +365,8 @@ function updateDone(state) {
 
 function updateError(state) {
   const cancelled = state.stage === "cancelled";
-  els.eyebrow.textContent = cancelled ? "cancelled" : "error";
-  els.title.textContent = cancelled ? "Job cancelled" : "Reconstruction failed";
+  els.eyebrow.textContent = cancelled ? "cancelled" : "reconstruction failed";
+  els.title.textContent = state.name || (cancelled ? "Job cancelled" : "Reconstruction failed");
   els.msg.textContent = state.error || state.message || (cancelled ? "The job was cancelled." : "An unknown error occurred.");
 }
 
@@ -288,6 +393,7 @@ function updateViewer(state) {
 function render(state) {
   setStatusPill(state.stage);
   if (state.input_url) inputUrl = state.input_url;
+  if (state.name) projectName = state.name;
   const panel = state.stage === "done" ? "done" : state.stage === "error" || state.stage === "cancelled" ? "error" : "running";
   if (panel !== currentPanel) mount(panel);
   if (panel === "running") updateRunning(state);
@@ -315,6 +421,7 @@ function startJob() {
   form.append("video", selectedFile);
   form.append("preset", els.presetSelect.value);
   form.append("pose_backend", els.poseSelect.value);
+  form.append("name", els.nameInput.value);
   fetch("/api/jobs", { method: "POST", body: form })
     .then(async (r) => {
       if (r.status === 409) throw new Error("A job is already running.");
@@ -322,16 +429,8 @@ function startJob() {
       return r.json();
     })
     .then(({ job_id }) => {
-      jobId = job_id;
-      sessionStorage.setItem("vts_job", job_id);
-      seenFrames = new Set();
-      lastSparseUrl = null;
-      lastCheckpointUrl = null;
-      checkpointCount = 0;
-      lastCamerasCount = 0;
-      mount("running");
+      attach(job_id);
       setStatusPill("frames");
-      connectEvents(job_id);
     })
     .catch((err) => {
       els.startBtn.disabled = false;
@@ -339,10 +438,26 @@ function startJob() {
     });
 }
 
+// Follow a job's state from scratch: a new upload, a saved project, or a run
+// already in progress.
+function attach(id) {
+  jobId = id;
+  projectName = null;
+  sessionStorage.setItem("vts_job", id);
+  seenFrames = new Set();
+  lastSparseUrl = null;
+  lastCheckpointUrl = null;
+  checkpointCount = 0;
+  lastCamerasCount = 0;
+  mount("running");
+  connectEvents(id);
+}
+
 function resetToIdle() {
   if (es) { es.close(); es = null; }
   sessionStorage.removeItem("vts_job");
   jobId = null;
+  projectName = null;
   if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
   inputUrl = null;
   selectedFile = null;
@@ -371,10 +486,7 @@ function resetToIdle() {
     } catch { /* older server without the endpoint */ }
   }
   if (saved) {
-    jobId = saved;
-    sessionStorage.setItem("vts_job", saved);
-    mount("running");
-    connectEvents(saved);
+    attach(saved);
   } else {
     mount("idle");
   }

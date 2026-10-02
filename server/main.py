@@ -9,17 +9,47 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import pipeline
+from . import pipeline, projects
 from .presets import DEFAULT_PRESET, PRESETS
 from .pipeline import Job
 
 app = FastAPI()
 
 # Every job this process has seen, running or finished, so its state and files
-# stay reachable after it ends. Which one is *running* is pipeline's to say.
-JOBS: dict[str, Job] = {}
+# stay reachable after it ends — plus every saved project from earlier runs of
+# the app. Which one is *running* is pipeline's to say.
+JOBS: dict[str, Job] = {job.id: job for job in projects.load_all(pipeline.JOBS_DIR)}
 # Held only so the event loop cannot garbage-collect a running pipeline task.
 _background_tasks: set[asyncio.Task] = set()
+
+
+async def _run_and_save(job: Job):
+    try:
+        await pipeline.start(job)
+    finally:
+        projects.save(job)
+
+
+# Plain def, not async: summaries walk each folder for its disk size, so FastAPI
+# runs this in its threadpool instead of on the event loop.
+@app.get("/api/jobs")
+def list_jobs():
+    """Saved projects, newest first."""
+    jobs = sorted(JOBS.values(), key=lambda j: j.snapshot()[0].get("created") or 0, reverse=True)
+    return [projects.summary(job) for job in jobs]
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Delete a project and its whole folder, downloads included."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.running:
+        raise HTTPException(409, "the job is still running; cancel it before deleting")
+    await asyncio.to_thread(projects.delete, job, pipeline.JOBS_DIR)
+    del JOBS[job_id]
+    return {"deleted": job_id}
 
 
 @app.post("/api/jobs")
@@ -27,6 +57,7 @@ async def create_job(
     video: UploadFile,
     preset: str = Form(DEFAULT_PRESET),
     pose_backend: str = Form("colmap"),
+    name: str = Form(""),
 ):
     if preset not in PRESETS:
         raise HTTPException(400, f"unknown preset '{preset}'")
@@ -45,17 +76,21 @@ async def create_job(
         ext = Path(video.filename or "input.mp4").suffix or ".mp4"
         with (job.work / f"input{ext}").open("wb") as f:
             shutil.copyfileobj(video.file, f)
+        # input_url is published so any tab can show the footage next to the
+        # reconstruction — the one that uploaded still has the bytes, but a
+        # reload or a second tab only has the job id.
+        job.update(
+            input_url=job.file_url(f"input{ext}"),
+            name=projects.clean_name(name, Path(video.filename or "untitled").stem),
+            created=time.time(),
+        )
+        projects.save(job)
     except Exception:
         pipeline.release(job)
         raise
 
-    # Published so any tab can show the footage next to the reconstruction —
-    # the one that uploaded still has the bytes, but a reload or a second tab
-    # only has the job id.
-    job.update(input_url=job.file_url(f"input{ext}"))
-
     JOBS[job_id] = job
-    task = asyncio.create_task(pipeline.start(job))
+    task = asyncio.create_task(_run_and_save(job))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
