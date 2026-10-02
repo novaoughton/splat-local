@@ -2,7 +2,8 @@
 
 ## Endpoints
 
-- `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "preset", "gaussians", "thumbnail"}]`. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
+- `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "preset", "gaussians", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
+- `DELETE /api/jobs/{id}` — delete the project and its whole folder, downloads included. 409 if the job is still running (cancel it first).
 - `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension). Returns `{"job_id": str}`. 409 if a job is already running.
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
@@ -61,4 +62,4 @@ Each job folder carries a `project.json`, written when the job starts and again 
 {"schema": 1, "id": "abc123", "preset": "high", "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
 ```
 
-On startup the server loads every `jobs/*/project.json` back into its job registry, so finished projects stay listable and their files stay servable across restarts. A project saved mid-run (the app stopped before it finished) loads as `stage: "error"` with an "interrupted" error. Folders without a `project.json`, unreadable files, and projects whose preset no longer exists are skipped.
+On startup the server loads every `jobs/*/project.json` back into its job registry, so finished projects stay listable and their files stay servable across restarts. A project saved mid-run (the app stopped before it finished) loads as `stage: "error"` with an "interrupted" error. A folder with no readable `project.json` (one from before saved projects, a failed upload, or a preset that no longer exists) loads as an "Unsaved run" with `preset: "unknown"`, so it still shows up and can be deleted.

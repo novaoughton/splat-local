@@ -30,11 +30,26 @@ async def _run_and_save(job: Job):
         projects.save(job)
 
 
+# Plain def, not async: summaries walk each folder for its disk size, so FastAPI
+# runs this in its threadpool instead of on the event loop.
 @app.get("/api/jobs")
-async def list_jobs():
+def list_jobs():
     """Saved projects, newest first."""
     jobs = sorted(JOBS.values(), key=lambda j: j.snapshot()[0].get("created") or 0, reverse=True)
     return [projects.summary(job) for job in jobs]
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Delete a project and its whole folder, downloads included."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.running:
+        raise HTTPException(409, "the job is still running; cancel it before deleting")
+    await asyncio.to_thread(projects.delete, job, pipeline.JOBS_DIR)
+    del JOBS[job_id]
+    return {"deleted": job_id}
 
 
 @app.post("/api/jobs")

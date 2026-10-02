@@ -35,8 +35,9 @@ class ProjectPersistenceTests(unittest.TestCase):
         self.assertEqual(state["stage"], "done")
         self.assertEqual(state["artifacts"], artifacts)
         self.assertEqual(projects.summary(loaded), {
-            "id": "a", "name": "Bedroom", "created": 100.0, "stage": "done", "preset": "high",
-            "gaussians": 1178163, "thumbnail": "/api/jobs/a/files/frames/1.jpg",
+            "id": "a", "name": "Bedroom", "created": 100.0, "stage": "done", "error": None,
+            "preset": "high", "gaussians": 1178163, "thumbnail": "/api/jobs/a/files/frames/1.jpg",
+            "bytes": (job.work / projects.PROJECT_FILE).stat().st_size,
         })
 
     def test_project_cut_off_mid_run_loads_as_interrupted(self):
@@ -53,7 +54,7 @@ class ProjectPersistenceTests(unittest.TestCase):
         self.assertIsNone(state["checkpoint"])
         self.assertFalse(loaded.running)
 
-    def test_unreadable_and_unknown_preset_projects_are_skipped(self):
+    def test_folders_without_a_usable_project_file_load_as_unsaved_runs(self):
         projects.save(self.make_job("good", stage="done"))
         (self.jobs_dir / "garbled").mkdir()
         (self.jobs_dir / "garbled" / projects.PROJECT_FILE).write_text("{not json")
@@ -62,8 +63,47 @@ class ProjectPersistenceTests(unittest.TestCase):
             {"id": "old", "preset": "retired", "pose_backend": "colmap", "state": {"stage": "done"}}
         ))
         (self.jobs_dir / "legacy").mkdir()  # a job folder from before project.json existed
+        (self.jobs_dir / "legacy" / "frame.jpg").write_bytes(b"x" * 10)
+        (self.jobs_dir / ".hidden").mkdir()
+        (self.jobs_dir / "stray.txt").write_text("not a folder")
 
-        self.assertEqual([j.id for j in projects.load_all(self.jobs_dir)], ["good"])
+        loaded = {j.id: j for j in projects.load_all(self.jobs_dir)}
+        self.assertEqual(sorted(loaded), ["garbled", "good", "legacy", "old"])
+        for job_id in ("garbled", "legacy", "old"):
+            summary = projects.summary(loaded[job_id])
+            self.assertEqual((summary["stage"], summary["error"], summary["preset"]),
+                             ("error", projects.UNSAVED, "unknown"))
+            self.assertEqual(summary["name"], f"Unsaved run {job_id}")
+            self.assertFalse(loaded[job_id].running)
+        self.assertEqual(projects.summary(loaded["legacy"])["bytes"], 10)
+
+    def test_load_all_on_a_missing_jobs_dir(self):
+        self.assertEqual(projects.load_all(self.jobs_dir / "nope"), [])
+
+    def test_delete_removes_the_whole_folder(self):
+        job = self.make_job("d", stage="done")
+        (job.work / "exports").mkdir()
+        (job.work / "exports" / "scene.ply").write_bytes(b"splats")
+        projects.save(job)
+
+        projects.delete(job, self.jobs_dir)
+        self.assertFalse(job.work.exists())
+        self.assertEqual(projects.load_all(self.jobs_dir), [])
+
+    def test_delete_refuses_folders_outside_the_jobs_dir(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        job = Job("e", "high", "colmap")
+        job.work = Path(outside.name) / "e"
+        job.work.mkdir()
+        with self.assertRaises(ValueError):
+            projects.delete(job, self.jobs_dir)
+        self.assertTrue(job.work.exists())
+
+        job.work = self.jobs_dir  # the jobs dir itself
+        with self.assertRaises(ValueError):
+            projects.delete(job, self.jobs_dir)
+        self.assertTrue(self.jobs_dir.exists())
 
     def test_save_leaves_no_temporary_file(self):
         job = self.make_job("c", stage="done")

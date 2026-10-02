@@ -106,6 +106,7 @@
   }
   .viewport-hud .line { margin-bottom: 3px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .viewport-hud .line b { color: var(--text); font-weight: 600; }
+  .frusta-toggle[hidden] { display: none; } /* display:flex below would override [hidden] */
   .frusta-toggle {
     position: absolute;
     top: 14px;
@@ -183,6 +184,7 @@
     border-radius: 3px;
     border: 1px solid var(--border-hi);
     background: var(--panel-2);
+    color: var(--text); /* <a class="btn"> download links would otherwise be link-blue */
     cursor: pointer;
     text-align: center;
     text-decoration: none;
@@ -279,17 +281,36 @@
   .project-list { display: flex; flex-direction: column; gap: 6px; }
   .project {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 6px;
-    text-align: left;
+    align-items: stretch;
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 3px;
+  }
+  .project:has(.project-open:hover) { border-color: var(--accent); }
+  .project:has(.project-delete:hover) { border-color: var(--bad); }
+  .project-open {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px;
+    text-align: left;
+    background: none;
+    border: none;
     cursor: pointer;
   }
-  .project:hover { border-color: var(--accent); }
+  .project-delete {
+    flex: none;
+    width: 34px;
+    background: none;
+    border: none;
+    border-left: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .project-delete:hover { color: var(--bad); }
   .project img, .project .thumb-empty {
     width: 54px;
     height: 38px;
