@@ -15,6 +15,7 @@ export function createViewer(canvas) {
   let pointCloud = null, frusta = null, splat = null;
   let frustaVisible = true;
   let loading = false, nextUrl = null, currentCheckpointUrl = null;
+  let home = null; // the framing fitToPositions chose, for resetView()
 
   // Drop a layer and free its GPU memory. SplatMesh owns its buffers and cleans
   // up after itself; plain three.js objects need their geometry and material
@@ -51,6 +52,21 @@ export function createViewer(canvas) {
     camera.updateProjectionMatrix();
     controls.target.set(cx, cy, cz);
     controls.update();
+    home = { position: camera.position.clone(), target: controls.target.clone(), radius: rig.radius };
+  }
+
+  // Back to the framing the scene opened with; the rig's own default (the
+  // origin) is the fallback before anything has been framed.
+  function resetView() {
+    if (!home) { rig.resetView(); return; }
+    rig.radius = home.radius;
+    camera.position.copy(home.position);
+    camera.near = Math.max(home.radius * 0.01, 0.001);
+    camera.far = home.radius * 60;
+    camera.updateProjectionMatrix();
+    controls.target.copy(home.target);
+    controls.update();
+    rig.invalidate();
   }
 
   function loadSparse(url) {
@@ -144,8 +160,9 @@ export function createViewer(canvas) {
     currentCheckpointUrl = null;
     nextUrl = null;
     loading = false;
+    home = null;
     rig.resetView();
   }
 
-  return { loadSparse, setCameras, setFrustaVisible, loadCheckpoint, reset };
+  return { loadSparse, setCameras, setFrustaVisible, loadCheckpoint, reset, resetView };
 }

@@ -5,7 +5,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from . import presets
+from . import failures, presets
 
 JOBS_DIR = Path(os.environ.get("SPLAT_JOBS_DIR", "jobs"))
 
@@ -169,7 +169,12 @@ def _run_sync(job: Job):
     except JobCancelled:
         job.update(stage="cancelled", message="cancelled")
     except Exception as exc:
-        job.update(stage="error", error=str(exc), message=str(exc))
+        # "stage" is about to become "error"; keep the one that failed.
+        failed_stage = job.snapshot()[0]["stage"]
+        job.update(
+            stage="error", error=str(exc), message=str(exc),
+            failed_stage=failed_stage, failure=failures.explain(failed_stage, str(exc)),
+        )
 
 
 async def start(job: Job):

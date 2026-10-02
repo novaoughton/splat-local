@@ -2,8 +2,11 @@
 
 ## Endpoints
 
+- `GET /api/presets` — each preset's settings (`frames`, `max_resolution`, `total_steps`, ...). The start screen uses `frames` with the chosen video's length to warn when frames would be more than 1.5 s apart.
 - `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "preset", "gaussians", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
 - `DELETE /api/jobs/{id}` — delete the project and its whole folder, downloads included. 409 if the job is still running (cancel it first).
+- `GET /api/jobs/{id}/disk` — `{"bytes", "reclaimable"}`: the folder's size, and what clean-up would free (0 unless the project finished).
+- `POST /api/jobs/{id}/clean` — remove a finished project's working files: `checkpoints/`, `colmap/`, `colmap_da3/`, `dataset/` and every frame not used as a thumbnail. The exports, source video, `sparse.ply` and `project.json` stay, so the project opens and views as before; it just can't be retrained without starting again from the video. Returns `{"freed", "bytes"}` and sets `state.cleaned`. 409 unless the project finished.
 - `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension). Returns `{"job_id": str}`. 409 if a job is already running.
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
@@ -31,9 +34,21 @@ Every event is `event: state` with a full JSON job snapshot:
   "cameras": [{"position": [x,y,z], "rotation": [qw,qx,qy,qz]}],
   "checkpoint": {"url": ".../checkpoints/splat_10000.ply", "step": 10000, "total_steps": 30000},
   "artifacts": [{"name": "scene.ply", "url": "...", "bytes": 123, "gaussians": 135575, "fill_ratio": 46.7}],
-  "error": null
+  "error": null,
+  "failed_stage": null,
+  "failure": null
 }
 ```
+
+When a job fails, `error` keeps the raw message, `failed_stage` names the stage it failed in, and `failure` (from `server/failures.py`) explains it for the person who filmed the room:
+
+```json
+{"stage": "poses", "title": "Couldn't work out where the camera was",
+ "detail": "Only 24 of 200 frames could be placed in 3D, and at least 30% are needed to train. ...",
+ "tips": ["Move slowly and smoothly, ..."], "capture_guide": true}
+```
+
+`capture_guide` is true when the footage is the likely cause; the UI then links `/capture.html`.
 
 `input_url` is the uploaded video, set as soon as the upload lands and served with range
 support so it can be scrubbed. The UI plays it beside the viewer for the whole run; the tab
@@ -59,7 +74,17 @@ Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and t
 Each job folder carries a `project.json`, written when the job starts and again when it ends:
 
 ```json
-{"schema": 1, "id": "abc123", "preset": "high", "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
+{"schema": 1, "id": "abc123", "preset": "high", "preset_settings": {"frames": 200, "total_steps": 18000, "...": "..."},
+ "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
 ```
+
+`preset_settings` records the preset's values as the run used them. `state.versions` records the tools that made the result, probed when the job starts; a probe that fails records `null`:
+
+```json
+{"splat_local": "892e2c4", "python": "3.12.15", "ffmpeg": "8.1.2", "sharp_frames": "0.3.1", "pycolmap": "4.1.0",
+ "colmap": "COLMAP 4.1.0", "brush": "brush-cli 1.0.0", "splat_transform": "splat-transform v3.9.0 (435b972)"}
+```
+
+(`da3_model` is added for Depth Anything 3 runs.) splat-transform is pinned (`SPLAT_TRANSFORM_VERSION` in `server/stages/export.py`), so its version only changes when the pin does.
 
 On startup the server loads every `jobs/*/project.json` back into its job registry, so finished projects stay listable and their files stay servable across restarts. A project saved mid-run (the app stopped before it finished) loads as `stage: "error"` with an "interrupted" error. A folder with no readable `project.json` (one from before saved projects, a failed upload, or a preset that no longer exists) loads as an "Unsaved run" with `preset: "unknown"`, so it still shows up and can be deleted.

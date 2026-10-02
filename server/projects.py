@@ -5,12 +5,14 @@ snapshot of it, written when the job starts and again when it ends; on startup
 every job folder is loaded back, so its results stay reachable and its disk
 space can be reclaimed from the app.
 """
+import dataclasses
 import json
 import os
 import shutil
 import time
 from pathlib import Path
 
+from . import failures
 from .pipeline import TERMINAL_STAGES, Job
 from .presets import DEFAULT_PRESET
 
@@ -34,6 +36,8 @@ def save(job: Job) -> None:
         "schema": SCHEMA,
         "id": job.id,
         "preset": job.preset_name,
+        # The values the run used, in case the preset is retuned later.
+        "preset_settings": dataclasses.asdict(job.preset),
         "pose_backend": job.pose_backend,
         "saved": time.time(),
         "state": state,
@@ -54,7 +58,10 @@ def _load(path: Path) -> Job | None:
     job.work = path.parent
     if state.get("stage") not in TERMINAL_STAGES:
         # A mid-run checkpoint URL may point at a preview file that was deleted.
-        state.update(stage="error", error=INTERRUPTED, message=INTERRUPTED, checkpoint=None)
+        state.update(
+            stage="error", error=INTERRUPTED, message=INTERRUPTED, checkpoint=None,
+            failed_stage=state.get("stage"), failure=failures.explain(state.get("stage"), INTERRUPTED),
+        )
     job.update(**state)
     return job
 
@@ -66,7 +73,7 @@ def _unsaved(folder: Path) -> Job:
     job.preset_name = "unknown"
     job.update(
         name=f"Unsaved run {folder.name}", created=folder.stat().st_mtime,
-        stage="error", error=UNSAVED, message=UNSAVED,
+        stage="error", error=UNSAVED, message=UNSAVED, failure=failures.explain(None, UNSAVED),
     )
     return job
 
@@ -100,6 +107,64 @@ def disk_bytes(folder: Path) -> int:
     return total
 
 
+# Working data a finished project no longer needs to be viewed or downloaded:
+# training snapshots (the final one is already copied to exports/scene.ply),
+# the pose solver's database and models, and the undistorted training images.
+_WORKING_DIRS = ("checkpoints", "colmap", "colmap_da3", "dataset")
+
+
+def _working_paths(job: Job) -> list[Path]:
+    """What clean() removes. Frames used as thumbnails in the UI are kept."""
+    state, _ = job.snapshot()
+    keep = {url.rsplit("/", 1)[-1] for url in (state.get("frames") or {}).get("sample") or []}
+    paths = [job.work / name for name in _WORKING_DIRS if (job.work / name).exists()]
+    frames = job.work / "frames"
+    if frames.is_dir():
+        paths += [p for p in frames.iterdir() if p.name not in keep]
+    return paths
+
+
+def _size(path: Path) -> int:
+    return disk_bytes(path) if path.is_dir() else path.lstat().st_size
+
+
+def reclaimable(job: Job) -> int:
+    """Bytes clean() would free; 0 unless the project finished."""
+    if job.snapshot()[0]["stage"] != "done":
+        return 0
+    return sum(_size(p) for p in _working_paths(job))
+
+
+def clean(job: Job) -> int:
+    """Remove a finished project's working files; returns the bytes freed.
+
+    The project still opens and views exactly as before: the exports, the
+    source video, the sparse cloud and the thumbnail frames all stay. What it
+    loses is the ability to retrain without starting again from the video.
+    """
+    state, _ = job.snapshot()
+    if state["stage"] != "done":
+        raise ValueError("only a finished project can be cleaned")
+    # Without Node the viewer shows the final checkpoint itself; point it at
+    # the identical copy in exports/ before checkpoints/ goes.
+    checkpoint = state.get("checkpoint")
+    if checkpoint and "/checkpoints/" in checkpoint["url"]:
+        if not (job.work / "exports" / "scene.ply").is_file():
+            raise ValueError("no exported scene.ply to keep showing")
+        job.update(checkpoint={**checkpoint, "url": job.file_url("exports/scene.ply")})
+    freed = 0
+    for path in _working_paths(job):
+        size = _size(path)
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        freed += size
+    job.update(cleaned=True)
+    save(job)
+    return freed
+
+
 def delete(job: Job, jobs_dir: Path) -> None:
     """Remove the job's folder, refusing anything that is not directly inside jobs_dir."""
     work = job.work.resolve()
@@ -120,6 +185,7 @@ def summary(job: Job) -> dict:
         "created": state.get("created"),
         "stage": state["stage"],
         "error": state.get("error"),
+        "failed_stage": state.get("failed_stage"),
         "preset": job.preset_name,
         "gaussians": gaussians,
         "thumbnail": sample[0] if sample else None,

@@ -9,7 +9,9 @@ const frustaToggle = $("frustaToggle");
 const frustaCheckbox = $("frustaCheckbox");
 const fileInput = $("fileInput");
 
+const resetViewBtn = $("resetViewBtn");
 const viewer = createViewer($("canvas"));
+resetViewBtn.addEventListener("click", () => viewer.resetView());
 
 const STAGES = ["frames", "poses", "train", "export"];
 const STAGE_LABEL = { frames: "Frames", poses: "Poses", train: "Train", export: "Export" };
@@ -27,6 +29,10 @@ let lastSparseUrl = null;
 let lastCheckpointUrl = null;
 let checkpointCount = 0;
 let lastCamerasCount = 0;
+let hudCheckpoint = null; // the latest state.checkpoint, for the HUD
+let splatCount = null; // splats in the scene the viewer is showing
+let splatCountUrl = null; // the checkpoint URL splatCount belongs to
+let splatCountKey = null; // last lookup made, so state events don't repeat it
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
 
@@ -84,7 +90,9 @@ function mountIdle() {
       <div class="hint">Drop a video, or click to browse</div>
       <div class="sub">MP4 · MOV · WEBM</div>
     </div>
+    <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">How to film a room that reconstructs well →</a>
     <div id="videoPreviewSlot"></div>
+    <div class="length-warn" id="lengthWarn"></div>
     <div class="field">
       <label for="nameInput">Project name</label>
       <input type="text" id="nameInput" maxlength="80" placeholder="named after the video" />
@@ -111,6 +119,7 @@ function mountIdle() {
   els = {
     dropzone: $("dropzone"),
     previewSlot: $("videoPreviewSlot"),
+    lengthWarn: $("lengthWarn"),
     nameInput: $("nameInput"),
     projectsSlot: $("projectsSlot"),
     presetSelect: $("presetSelect"),
@@ -129,6 +138,7 @@ function mountIdle() {
   });
   fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); };
   els.startBtn.addEventListener("click", startJob);
+  els.presetSelect.addEventListener("change", updateLengthWarning);
   if (selectedFile) renderVideoPreview();
   loadProjects();
 }
@@ -140,7 +150,8 @@ function projectStatus(p) {
   if (p.stage === "cancelled") return "cancelled";
   if (p.stage !== "error") return "running";
   if (p.preset === "unknown") return "no project file";
-  return (p.error || "").startsWith("interrupted") ? "interrupted" : "failed";
+  if ((p.error || "").startsWith("interrupted")) return "interrupted";
+  return p.failed_stage ? `failed at ${STAGE_NAME[p.failed_stage] || p.failed_stage}` : "failed";
 }
 
 function projectMeta(p) {
@@ -220,14 +231,54 @@ function renderVideoPreview() {
     videoSrc(),
     `<span>${selectedFile.name} · ${humanSize(selectedFile.size)}</span><button id="clearBtn">remove</button>`,
   );
+  // The duration decides whether the preset's frames will be close enough together.
+  els.previewSlot.querySelector("video").addEventListener("loadedmetadata", (e) => {
+    selectedDuration = Number.isFinite(e.target.duration) ? e.target.duration : null;
+    updateLengthWarning();
+  });
   $("clearBtn").addEventListener("click", () => {
     if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
     selectedFile = null;
+    selectedDuration = null;
     els.previewSlot.innerHTML = "";
     els.nameInput.placeholder = "named after the video";
     els.startBtn.disabled = true;
+    updateLengthWarning();
   });
   els.startBtn.disabled = false;
+}
+
+// Presets take a fixed number of frames, so a long video spreads them out. Past
+// ~1.5 s apart they stop overlapping enough for poses: the 9-minute bedroom test
+// failed at 2.8 s, while 0.7 s (desk) and 1.0 s (a 3-minute clip) worked.
+const MAX_FRAME_GAP_S = 1.5;
+let presetInfo = null; // GET /api/presets
+let selectedDuration = null; // seconds, once the preview has read the metadata
+
+fetch("/api/presets").then((r) => (r.ok ? r.json() : null)).then((p) => { presetInfo = p; updateLengthWarning(); }).catch(() => {});
+
+function formatDuration(s) {
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m ? `${m} min ${sec} s` : `${sec} s`;
+}
+
+function updateLengthWarning() {
+  if (currentPanel !== "idle" || !els.lengthWarn) return;
+  const preset = els.presetSelect.value;
+  const frames = presetInfo?.[preset]?.frames;
+  const gap = selectedDuration && frames ? selectedDuration / frames : 0;
+  if (gap <= MAX_FRAME_GAP_S) { els.lengthWarn.innerHTML = ""; return; }
+  const labelOf = (name) => [...els.presetSelect.options].find((o) => o.value === name)?.textContent.split(" —")[0] || name;
+  const label = labelOf(preset);
+  const better = Object.entries(presetInfo)
+    .filter(([name, p]) => name !== preset && selectedDuration / p.frames <= MAX_FRAME_GAP_S)
+    .sort((a, b) => a[1].frames - b[1].frames)[0];
+  els.lengthWarn.innerHTML = `
+    <p><b>This video may be too long for ${escapeHTML(label)}.</b> It runs ${formatDuration(selectedDuration)}, and ${escapeHTML(label)} uses ${frames} frames,
+    so they'd be about ${gap.toFixed(1)} s apart. That's usually too far for the camera positions to be worked out.</p>
+    <p>${better ? `The ${escapeHTML(labelOf(better[0]))} preset (${better[1].frames} frames) keeps them ${(selectedDuration / better[1].frames).toFixed(1)} s apart. Or t` : "T"}rim it to the best 2–3 minutes, or film one video per area.
+    <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a></p>
+  `;
 }
 
 function mountRunning() {
@@ -266,6 +317,7 @@ function mountRunning() {
     fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }).catch(() => {});
   });
   frustaToggle.hidden = false;
+  resetViewBtn.hidden = false;
 }
 
 function mountDone() {
@@ -273,18 +325,55 @@ function mountDone() {
     <div class="eyebrow">reconstruction complete</div>
     <h2 class="panel-title" id="doneTitle">Scene ready</h2>
     <div class="artifact-list" id="artifactList"></div>
+    <div class="disk-note" id="diskNote"></div>
+    <button class="btn" id="cleanBtn" hidden></button>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
-  els = { artifactList: $("artifactList"), title: $("doneTitle") };
+  els = { artifactList: $("artifactList"), title: $("doneTitle"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn") };
   wireProjectButtons();
+  els.cleanBtn.addEventListener("click", cleanProject);
+  loadDisk();
+}
+
+// Disk use for the open project, and the clean-up offer when there's
+// working data worth removing (training snapshots dominate: ~5 GB a run).
+const CLEAN_THRESHOLD = 10 * 1024 * 1024;
+
+async function loadDisk() {
+  const id = jobId;
+  const disk = await fetch(`/api/jobs/${encodeURIComponent(id)}/disk`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!disk || id !== jobId || currentPanel !== "done") return;
+  els.diskNote.textContent = `Using ${humanSize(disk.bytes)} on disk.`;
+  els.cleanBtn.hidden = disk.reclaimable < CLEAN_THRESHOLD;
+  els.cleanBtn.textContent = `Clean up working files · frees ${humanSize(disk.reclaimable)}`;
+  els.cleanBtn.dataset.reclaimable = disk.reclaimable;
+}
+
+async function cleanProject() {
+  const freeing = humanSize(Number(els.cleanBtn.dataset.reclaimable));
+  const name = projectName || "this project";
+  if (!confirm(`Clean up "${name}"?\n\nThis frees ${freeing} by removing training snapshots, the camera-solving data and spare frames. The scene, the downloads and the source video stay, so it opens exactly as before. It can't be retrained without starting again from the video.`)) return;
+  els.cleanBtn.disabled = true;
+  els.cleanBtn.textContent = "Cleaning up…";
+  const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/clean`, { method: "POST" }).catch(() => null);
+  if (!r || !r.ok) {
+    const detail = r ? (await r.json().catch(() => ({}))).detail : null;
+    alert(`Couldn't clean up "${name}": ${detail || "the app didn't respond"}.`);
+    els.cleanBtn.disabled = false;
+    loadDisk();
+    return;
+  }
+  const { freed, bytes } = await r.json();
+  els.cleanBtn.hidden = true;
+  els.diskNote.textContent = `Cleaned up: freed ${humanSize(freed)}. Now using ${humanSize(bytes)} on disk.`;
 }
 
 function mountError() {
   sidebar.innerHTML = `
     <div class="eyebrow" id="errorEyebrow">error</div>
     <h2 class="panel-title" id="errorTitle">Something went wrong</h2>
-    <div class="center-note" id="errorMsg"></div>
+    <div class="failure" id="errorMsg"></div>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
@@ -357,17 +446,43 @@ function updateDone(state) {
   if (state.name) els.title.textContent = state.name;
   els.artifactList.innerHTML = (state.artifacts || []).map((a) => `
     <div class="artifact">
-      <div><div class="name">${a.name}</div><div class="size">${humanSize(a.bytes)}</div></div>
+      <div><div class="name">${a.name}</div><div class="size">${a.gaussians ? `${(a.gaussians / 1e6).toFixed(2)}M splats · ` : ""}${humanSize(a.bytes)}</div></div>
       <a class="btn" href="${a.url}" download>Download</a>
     </div>
   `).join("") || `<div class="center-note">No artifacts listed.</div>`;
 }
 
+const STAGE_NAME = { frames: "frames", poses: "camera positions", train: "training", export: "export" };
+
 function updateError(state) {
   const cancelled = state.stage === "cancelled";
-  els.eyebrow.textContent = cancelled ? "cancelled" : "reconstruction failed";
+  const f = state.failure;
+  const stage = STAGE_NAME[state.failed_stage] || state.failed_stage;
+  els.eyebrow.textContent = cancelled ? "cancelled"
+    : !stage ? "reconstruction failed"
+    : (state.error || "").startsWith("interrupted") ? `interrupted during ${stage}`
+    : `failed at ${stage}`;
   els.title.textContent = state.name || (cancelled ? "Job cancelled" : "Reconstruction failed");
-  els.msg.textContent = state.error || state.message || (cancelled ? "The job was cancelled." : "An unknown error occurred.");
+
+  // Rebuilt only when the content changes, so an open "technical details" stays open.
+  const raw = state.error || state.message || "";
+  const key = JSON.stringify([cancelled, f, raw]);
+  if (els.msg.dataset.key === key) return;
+  els.msg.dataset.key = key;
+  if (cancelled) {
+    els.msg.innerHTML = `<p class="detail">The job was cancelled.</p>`;
+  } else if (f) {
+    els.msg.innerHTML = `
+      <p class="headline">${escapeHTML(f.title)}</p>
+      <p class="detail">${escapeHTML(f.detail)}</p>
+      ${f.tips?.length ? `<div class="tips-label">Next time</div><ul class="tips">${f.tips.map((t) => `<li>${escapeHTML(t)}</li>`).join("")}</ul>` : ""}
+      ${f.capture_guide ? `<a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Read the capture guide →</a>` : ""}
+      ${raw && raw !== f.detail ? `<details><summary>Technical details</summary><pre>${escapeHTML(raw)}</pre></details>` : ""}
+    `;
+  } else {
+    // A project saved before failures were explained: show what there is.
+    els.msg.innerHTML = `<p class="detail">${escapeHTML(raw || "An unknown error occurred.")}</p>`;
+  }
 }
 
 function updateViewer(state) {
@@ -384,9 +499,54 @@ function updateViewer(state) {
     checkpointCount++;
     viewer.loadCheckpoint(state.checkpoint.url);
   }
-  viewportHud.innerHTML = state.checkpoint
-    ? `<div class="line">checkpoint <b>${checkpointCount}</b></div><div class="line">step <b>${state.checkpoint.step.toLocaleString()}</b> / ${state.checkpoint.total_steps.toLocaleString()}</div>`
-    : "";
+  hudCheckpoint = state.checkpoint || null;
+  // At most two lookups per file: when it appears, and again once the export
+  // stage's measurements land.
+  const countKey = state.checkpoint && `${state.checkpoint.url}|${state.artifacts ? 1 : 0}`;
+  if (countKey && countKey !== splatCountKey) {
+    splatCountKey = countKey;
+    updateSplatCount(state);
+  }
+  renderHud();
+}
+
+// The count of the file on screen. The viewer itself can't say: it streams the
+// scene in levels of detail, so its own count starts at 0 and then tracks only
+// what is currently drawn. Finished scenes use the export stage's measurement
+// (it lands a beat after the viewer file does, hence the retry on later
+// states); training checkpoints are PLYs, whose header states the count.
+async function updateSplatCount(state) {
+  const url = state.checkpoint.url;
+  if (splatCountUrl !== url) { splatCountUrl = url; splatCount = null; }
+  const name = url.split("/").pop();
+  let count = (state.artifacts || []).find((a) => a.name === name)?.gaussians ?? null;
+  if (count == null && name.endsWith(".ply")) count = await plyVertexCount(url);
+  if (splatCountUrl !== url || count == null) return;
+  splatCount = count;
+  renderHud();
+}
+
+// Reads just the header: the first chunk of the response, then cancels the rest.
+async function plyVertexCount(url) {
+  try {
+    const r = await fetch(url, { headers: { Range: "bytes=0-4095" } });
+    const reader = r.body.getReader();
+    const { value } = await reader.read();
+    reader.cancel().catch(() => {});
+    const m = new TextDecoder().decode(value).match(/element vertex (\d+)/);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderHud() {
+  const c = hudCheckpoint;
+  viewportHud.innerHTML = [
+    c && `<div class="line">checkpoint <b>${checkpointCount}</b></div>`,
+    c && `<div class="line">step <b>${c.step.toLocaleString()}</b> / ${c.total_steps.toLocaleString()}</div>`,
+    c && splatCount != null && `<div class="line">splats <b>${splatCount.toLocaleString()}</b></div>`,
+  ].filter(Boolean).join("");
 }
 
 // --------------------------------------------------------------- driving ---
@@ -467,6 +627,11 @@ function resetToIdle() {
   checkpointCount = 0;
   lastCamerasCount = 0;
   frustaToggle.hidden = true;
+  resetViewBtn.hidden = true;
+  hudCheckpoint = null;
+  splatCount = null;
+  splatCountUrl = null;
+  splatCountKey = null;
   frustaCheckbox.checked = true;
   viewer.setFrustaVisible(true);
   viewportHud.innerHTML = "";

@@ -43,6 +43,7 @@
     overflow: hidden;
   }
   button, select, input { font: inherit; color: inherit; }
+  [hidden] { display: none !important; } /* class display rules (.btn, .frusta-toggle) would override it */
 
   /* ---------- topbar ---------- */
   .topbar {
@@ -106,7 +107,21 @@
   }
   .viewport-hud .line { margin-bottom: 3px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .viewport-hud .line b { color: var(--text); font-weight: 600; }
-  .frusta-toggle[hidden] { display: none; } /* display:flex below would override [hidden] */
+  .view-btn {
+    position: absolute;
+    top: 50px;
+    right: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    background: rgba(10,11,12,.55);
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .view-btn:hover { color: var(--text); border-color: var(--accent); }
   .frusta-toggle {
     position: absolute;
     top: 14px;
@@ -324,6 +339,56 @@
   .project .meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
   .project .meta.bad { color: var(--bad); }
 
+  .length-warn {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--accent-soft);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+  .length-warn:empty { display: none; }
+  .length-warn p { margin: 0; }
+  .length-warn b { color: var(--text); font-weight: 600; }
+
+  .disk-note { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .disk-note:empty { display: none; }
+
+  /* ---------- failure explanation ---------- */
+  .failure { display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.55; }
+  .failure p { margin: 0; }
+  .failure .headline { color: var(--bad); font-weight: 600; }
+  .failure .detail { color: var(--text-dim); }
+  .failure .tips-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .failure .tips { margin: 0; padding-left: 18px; color: var(--text-dim); }
+  .failure .tips li { margin: 3px 0; }
+  .failure details { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+  .failure summary { cursor: pointer; }
+  .failure pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 6px 0 0;
+    padding: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    max-height: 200px;
+    overflow: auto;
+  }
+  .guide-link { font-family: var(--font-mono); font-size: 11px; color: var(--accent); text-decoration: none; }
+  .guide-link:hover { text-decoration: underline; }
+
   .center-note { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
   .checkbox-row { display: flex; align-items: center; gap: 6px; }
   .checkbox-row input { accent-color: var(--accent); }
@@ -344,6 +409,7 @@
         <input type="checkbox" id="frustaCheckbox" checked />
         camera frusta
       </label>
+      <button class="view-btn" id="resetViewBtn" hidden>reset view</button>
       <div class="nav-hint">drag orbit · scroll zoom · WASD move · ←→ turn · ↑↓ look</div>
     </main>
   </div>
