@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capture Guide</title>
+<link rel="icon" href="data:," />
+<style>
+  :root {
+    --bg: #0a0b0c;
+    --panel: #15171b;
+    --border: #24272d;
+    --text: #e8e9eb;
+    --text-dim: #888e97;
+    --text-faint: #4d525a;
+    --accent: #e3a53d;
+    --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); line-height: 1.6; }
+  .topbar { height: 52px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .wordmark { font-family: var(--font-mono); font-size: 13px; font-weight: 600; letter-spacing: 0.12em; color: var(--text); text-decoration: none; }
+  .wordmark .arrow { color: var(--accent); margin: 0 2px; }
+  main { max-width: 680px; margin: 0 auto; padding: 36px 20px 64px; }
+  .eyebrow { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; color: var(--text-faint); text-transform: uppercase; }
+  h1 { font-family: var(--font-mono); font-size: 20px; letter-spacing: 0.02em; margin: 6px 0 10px; }
+  .lede { color: var(--text-dim); margin: 0 0 28px; }
+  h2 { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin: 28px 0 8px; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--text-faint); }
+  b { font-weight: 600; }
+  .note { margin-top: 32px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 3px; background: var(--panel); color: var(--text-dim); font-size: 14px; }
+</style>
+</head>
+<body>
+  <header class="topbar"><a class="wordmark" href="/">SPLAT<span class="arrow">→</span>LOCAL</a></header>
+  <main>
+    <div class="eyebrow">capture guide</div>
+    <h1>Filming a room that reconstructs well</h1>
+    <p class="lede">
+      Before anything can be trained, the app has to work out where the camera was for every frame.
+      That step fails when frames don't overlap or there's nothing to track, and no setting can fix it
+      afterwards. Footage is the biggest factor in quality.
+    </p>
+
+    <h2>Length</h2>
+    <ul>
+      <li>Aim for <b>2–3 minutes</b> per room. Presets pick a fixed number of frames (Preview 100, High 200, Max 250), so a longer video spreads them further apart and they stop overlapping.</li>
+    </ul>
+
+    <h2>Movement</h2>
+    <ul>
+      <li>Move <b>slowly and smoothly</b>. Don't swing quickly from one area to another.</li>
+      <li>Walk the edge of the room facing in, then do a second loop through the middle facing out towards the walls.</li>
+      <li>Add passes at a low and a high height.</li>
+      <li><b>Overlap a lot</b>: every part of the room should stay in view for a few seconds. End near where you started.</li>
+    </ul>
+
+    <h2>Camera</h2>
+    <ul>
+      <li>Lock exposure, focus and white balance if your camera allows it.</li>
+      <li>Use the main (1×) lens, not the ultra-wide.</li>
+      <li>30 fps or higher keeps motion blur down.</li>
+    </ul>
+
+    <h2>Light and surfaces</h2>
+    <ul>
+      <li>Turn on <b>all the lights</b> and keep them constant. Avoid patches of sunlight that move.</li>
+      <li><b>Film in daylight</b> if you can. At night, windows turn into mirrors and lamps glare, which fills the scene with noise.</li>
+      <li><b>Stand back from plain walls and doors.</b> A close-up of a blank surface gives the software nothing to track.</li>
+      <li>Windows, mirrors, screens and glossy floors confuse it too. Cover or avoid them where you can.</li>
+    </ul>
+
+    <h2>Coverage</h2>
+    <ul>
+      <li>Film the corners, the ceiling edges and behind furniture you want to keep. Anything never seen will be missing or blurry.</li>
+      <li>Include something of known size, such as a door or a tape measure on the floor, for setting real-world scale later.</li>
+    </ul>
+
+    <h2>People and privacy</h2>
+    <ul>
+      <li>Keep the room empty while filming. Moving people leave ghosts.</li>
+      <li>If you film somewhere sensitive, get permission and keep personal information, notices and screens out of shot.</li>
+    </ul>
+
+    <p class="note">Everything stays on this computer: the footage is processed locally and never uploaded.</p>
+  </main>
+</body>
+</html>

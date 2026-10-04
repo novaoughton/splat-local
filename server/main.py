@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 import shutil
 import time
@@ -9,7 +10,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import pipeline, projects
+from . import pipeline, projects, versions
 from .presets import DEFAULT_PRESET, PRESETS
 from .pipeline import Job
 
@@ -25,9 +26,22 @@ _background_tasks: set[asyncio.Task] = set()
 
 async def _run_and_save(job: Job):
     try:
+        # Probed off the event loop: the npx and brush calls take a second or two.
+        try:
+            found = await asyncio.to_thread(versions.collect, job.pose_backend)
+        except Exception:
+            found = None  # a version probe must never stop the job itself
+        job.update(versions=found)
+        projects.save(job)
         await pipeline.start(job)
     finally:
         projects.save(job)
+
+
+@app.get("/api/presets")
+async def list_presets():
+    """Each preset's settings, so the UI can reason about frame counts."""
+    return {name: dataclasses.asdict(preset) for name, preset in PRESETS.items()}
 
 
 # Plain def, not async: summaries walk each folder for its disk size, so FastAPI
@@ -37,6 +51,30 @@ def list_jobs():
     """Saved projects, newest first."""
     jobs = sorted(JOBS.values(), key=lambda j: j.snapshot()[0].get("created") or 0, reverse=True)
     return [projects.summary(job) for job in jobs]
+
+
+@app.get("/api/jobs/{job_id}/disk")
+def job_disk(job_id: str):
+    """Disk use, and how much "clean up" would free."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return {"bytes": projects.disk_bytes(job.work), "reclaimable": projects.reclaimable(job)}
+
+
+@app.post("/api/jobs/{job_id}/clean")
+async def clean_job(job_id: str):
+    """Remove a finished project's working files, keeping everything it shows."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.snapshot()[0]["stage"] != "done":
+        raise HTTPException(409, "only a finished project can be cleaned up")
+    try:
+        freed = await asyncio.to_thread(projects.clean, job)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return {"freed": freed, "bytes": projects.disk_bytes(job.work)}
 
 
 @app.delete("/api/jobs/{job_id}")
