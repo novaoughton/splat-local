@@ -3,11 +3,11 @@
 ## Endpoints
 
 - `GET /api/presets` — each preset's settings (`frames`, `max_resolution`, `total_steps`, ...). The start screen uses `frames` with the chosen video's length to warn when frames would be more than 1.5 s apart.
-- `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "preset", "gaussians", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
+- `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "failed_stage", "preset", "outputs", "gaussians", "triangles", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
 - `DELETE /api/jobs/{id}` — delete the project and its whole folder, downloads included. 409 if the job is still running (cancel it first).
 - `GET /api/jobs/{id}/disk` — `{"bytes", "reclaimable"}`: the folder's size, and what clean-up would free (0 unless the project finished).
-- `POST /api/jobs/{id}/clean` — remove a finished project's working files: `checkpoints/`, `colmap/`, `colmap_da3/`, `dataset/` and every frame not used as a thumbnail. The exports, source video, `sparse.ply` and `project.json` stay, so the project opens and views as before; it just can't be retrained without starting again from the video. Returns `{"freed", "bytes"}` and sets `state.cleaned`. 409 unless the project finished.
-- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension). Returns `{"job_id": str}`. 409 if a job is already running.
+- `POST /api/jobs/{id}/clean` — remove a finished project's working files: `checkpoints/`, `colmap/`, `colmap_da3/`, `dataset/`, `mesh_input/`, `mesh_raw/` and every frame not used as a thumbnail. The exports, source video, `sparse.ply` and `project.json` stay, so the project opens and views as before; it just can't be retrained without starting again from the video. Returns `{"freed", "bytes"}` and sets `state.cleaned`. 409 unless the project finished.
+- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension), `outputs` (`splat|mesh|both`, default `splat`; see [Mesh output](#mesh-output)). Returns `{"job_id": str}`. 409 if a job is already running.
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
 - `GET /api/jobs/{id}/events` — SSE stream. On connect, emits current state, then updates.
@@ -25,7 +25,8 @@ Every event is `event: state` with a full JSON job snapshot:
   "job_id": "abc123",
   "name": "Living room",
   "created": 1790971275.0,
-  "stage": "frames|poses|train|export|done|error|cancelled",
+  "stage": "frames|poses|mesh|train|export|done|error|cancelled",
+  "outputs": "splat|mesh|both",
   "progress": 0.42,
   "message": "human-readable status line",
   "input_url": "/api/jobs/abc123/files/input.mp4",
@@ -36,7 +37,8 @@ Every event is `event: state` with a full JSON job snapshot:
   "artifacts": [{"name": "scene.ply", "url": "...", "bytes": 123, "gaussians": 135575, "fill_ratio": 46.7}],
   "error": null,
   "failed_stage": null,
-  "failure": null
+  "failure": null,
+  "mesh": null
 }
 ```
 
@@ -58,6 +60,20 @@ Fields are null/absent until their stage produces them. `checkpoint` is what the
 
 `gaussians` and `fill_ratio` (average overdraw layers per pixel, from `splat-transform --stats`) are present per artifact when Node is available; `name`/`url`/`bytes` are always present.
 
+## Mesh output
+
+`outputs` picks what a job makes. The stages run are `frames, poses` and then `mesh` and/or `train, export` (the mesh goes first in `both`; it takes minutes, training a quarter of an hour). Poses always run: the splat trains on them and the mesh is lined up with them.
+
+The `mesh` stage runs `tools/objcap`, a small Swift CLI around Apple's Object Capture (RealityKit `PhotogrammetrySession`), on the selected frames. It is built with `swiftc` by `setup.sh` into `$OBJCAP_BIN` (or `vendor/objcap`), and rebuilt on first use if it's missing or older than its source. Object Capture solves its own cameras, so the stage fits a robust similarity transform from its camera poses to COLMAP's (`server/align.py`) and rewrites the mesh into COLMAP's coordinates, the same as the splat's. When it finishes:
+
+```json
+"mesh": {"url": "/api/jobs/abc123/files/exports/mesh/mesh.obj", "triangles": 65313,
+         "frames_used": 198, "frames_total": 200,
+         "alignment": {"matched": 180, "used": 93, "residual_pct": 0.44, "scale": 4.0012}}
+```
+
+`residual_pct` is the median camera-centre mismatch after the fit, as a percentage of the camera path's spread. A `mesh.zip` artifact (`mesh/mesh.obj`, `mesh.mtl`, texture maps; `triangles` instead of `gaussians`) joins the download list. With `outputs: "both"`, a mesh failure doesn't stop the splat: the job carries on and records `mesh_error` and `mesh_failure` (shaped like `failure`). Preset → Object Capture detail: preview → `reduced`, high → `medium`, max → `full`. `versions.macos` is recorded for mesh jobs (Object Capture ships with macOS).
+
 ## Export artifacts
 
 - **Archive** — `scene.ply`, `scene.spz`: what the user downloads. Full resolution, SH3, only NaN/Inf/degenerate gaussians removed. No quality decision is applied.
@@ -67,7 +83,7 @@ Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and t
 
 ## Job directory layout
 
-`jobs/{id}/`: `project.json`, `input.<ext>`, `frames/*.jpg`, `colmap/` (db + sparse), `dataset/` (undistorted images + sparse for Brush), `sparse.ply`, `checkpoints/*.ply` (Brush's `export_*.ply` originals, kept; plus at most two transient `preview_*.ply` stream copies while training runs), `exports/*`
+`jobs/{id}/`: `project.json`, `input.<ext>`, `frames/*.jpg`, `colmap/` (db + sparse), `dataset/` (undistorted images + sparse for Brush), `sparse.ply`, `checkpoints/*.ply` (Brush's `export_*.ply` originals, kept; plus at most two transient `preview_*.ply` stream copies while training runs), `mesh_input/` (links to the frames Object Capture reads), `mesh_raw/` (its unaligned output + `poses.json`), `exports/*` (including `exports/mesh/` and `exports/mesh.zip`)
 
 ## Saved projects
 

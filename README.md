@@ -119,6 +119,7 @@ Why the gate exists, what it checks, and the held-out-view PSNR behind the defau
 
 - Optional DA3 pose backend: `uv sync --group da3` (Python 3.12 venv, installs PyTorch). Uses `depth-anything/DA3-LARGE` by default; override with `DA3_MODEL=depth-anything/DA3-SMALL ./run.sh` for speed.
 - Optional `.spz` archive + `.sog` viewer export uses `npx @playcanvas/splat-transform` (needs Node). Without it you still get the raw `scene.ply`.
+- Optional **mesh output** (choose *Mesh* or *Both* at upload): a textured `.obj` from Apple's Object Capture, lined up with the splat so it can serve as collision geometry. Needs macOS 12+ on Apple Silicon and the Xcode Command Line Tools (`xcode-select --install`) to build `tools/objcap`. Photogrammetry can't reconstruct glass; the splat can.
 - Why not LingBot-World? It's an image→video *world generator* (28B params, CUDA-only, no 3D output) — the wrong tool for video→3D reconstruction, and it can't run on a Mac. This project uses the reconstruction stack that modern world-model papers themselves use for geometry.
 
 ## Privacy
@@ -135,12 +136,13 @@ Bug reports, failed captures and pull requests are welcome — see [CONTRIBUTING
 
 | | |
 |---|---|
-| `server/` | FastAPI app and the four pipeline stages |
+| `server/` | FastAPI app and the pipeline stages (frames, poses, optional mesh, train, export) |
 | `viewer/` | the Spark/three.js viewer engine, shared by the app and the demo site |
 | `web/` | the app's vanilla-JS UI |
 | `browser/` | the [browser creator](browser/README.md): video → splat entirely in desktop Chrome/Edge |
 | `site/` | the [demo site](https://michael-l-i.github.io/splat-local/); `site/build.sh` assembles it into `_site/` |
-| `vendor/` | Brush binary, three.js and Spark builds |
+| `vendor/` | Brush binary, three.js (+ OBJ/MTL loaders) and Spark builds |
+| `tools/objcap/` | Swift CLI around Apple's Object Capture, for the mesh output |
 | `jobs/` | per-run work dirs (gitignored) |
 | `scripts/` | `eval.py` — held-out PSNR/SSIM harness, dev tooling only |
 | `docs/` | [API contract](docs/api.md), [pose mapper A/B](docs/pose-mapper.md), [step count](docs/step-count.md), [viewer cost](docs/viewer-cost.md) |

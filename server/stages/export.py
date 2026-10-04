@@ -122,7 +122,10 @@ def run(job, work: Path, preset):
 
     job.update(message="collecting artifacts", progress=0.9)
 
-    # Only advertise this run's successful artifacts, archive first.
+    # Only advertise this run's successful artifacts, archive first; a mesh the
+    # mesh stage already published (outputs "both") stays listed after them.
+    state, _ = job.snapshot()
+    mesh_artifacts = [a for a in (state.get("artifacts") or []) if a.get("name") == "mesh.zip"]
     artifacts = [
         {
             "name": p.name,
@@ -132,4 +135,4 @@ def run(job, work: Path, preset):
         }
         for p in files
     ]
-    job.update(artifacts=artifacts, progress=1.0, message="export complete")
+    job.update(artifacts=artifacts + mesh_artifacts, progress=1.0, message="export complete")

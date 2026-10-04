@@ -7,6 +7,7 @@ export UV_PROJECT_ENVIRONMENT="$SPLAT_DATA_DIR/venv"
 export SPLAT_JOBS_DIR="$SPLAT_DATA_DIR/jobs"
 export BRUSH_SRC_DIR="$SPLAT_DATA_DIR/brush_src"
 export BRUSH_PREBUILT="$SPLAT_DATA_DIR/brush"
+export OBJCAP_BIN="$SPLAT_DATA_DIR/bin/objcap"  # Object Capture helper for meshes (tools/objcap)
 mkdir -p "$SPLAT_DATA_DIR" "$SPLAT_JOBS_DIR"
 
 # Homebrew's rustup is keg-only, so put it (and cargo) on PATH here.

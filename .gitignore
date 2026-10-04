@@ -5,6 +5,7 @@ node_modules/
 .DS_Store
 jobs/
 vendor/brush
+vendor/objcap
 vendor/brush_src/
 vendor/brush_browser_src/
 *.ply
