@@ -1,10 +1,15 @@
 // The in-app viewer: shows a reconstruction as it is built.
 //
-// Three layers arrive in order, each replacing the last — the COLMAP sparse
-// point cloud, the camera frusta, then training checkpoints as Brush exports
-// them. Scene setup, navigation and the frame loop come from the shared rig.
+// Layers arrive in order — the COLMAP sparse point cloud, the camera frusta,
+// then training checkpoints as Brush exports them — plus, when the project
+// asked for one, the Object Capture mesh, already lined up with the splat.
+// The splat and the mesh are alternatives on screen (setLayer); the point
+// cloud shows only until either has arrived. Scene setup, navigation and the
+// frame loop come from the shared rig.
 import * as THREE from "three";
 import { SplatMesh } from "@sparkjsdev/spark";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { createRig, LOD, percentile } from "splat-viewer/core.js";
 import { parsePLYAsync } from "splat-viewer/ply.js";
 import { estimateUp } from "./level.js";
@@ -17,7 +22,9 @@ export function createViewer(canvas) {
   const rig = createRig(canvas);
   const { world, camera, controls } = rig;
 
-  let pointCloud = null, frusta = null, splat = null;
+  let pointCloud = null, frusta = null, splat = null, mesh = null;
+  let layer = "splat"; // which of splat / mesh to show when both exist
+  let meshUrl = null;
   let frustaVisible = true;
   let loading = false, nextUrl = null, currentCheckpointUrl = null;
   let home = null; // the framing frame() chose, for resetView()
@@ -46,9 +53,71 @@ export function createViewer(canvas) {
     if (!obj) return null;
     world.remove(obj);
     if (obj.dispose) obj.dispose();
-    else { obj.geometry.dispose(); obj.material.dispose(); }
+    else {
+      obj.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (o.material.map) o.material.map.dispose();
+          o.material.dispose();
+        }
+      });
+    }
     rig.invalidate(); // every removal is a scene change the rig cannot see
     return null;
+  }
+
+  // Splat or mesh, whichever is chosen; failing that whichever exists; the
+  // sparse cloud only while neither has arrived.
+  function applyVisibility() {
+    const showMesh = !!mesh && (layer === "mesh" || !splat);
+    if (mesh) mesh.visible = showMesh;
+    if (splat) splat.visible = !showMesh;
+    if (pointCloud) pointCloud.visible = !splat && !mesh;
+    rig.invalidate();
+  }
+
+  function setLayer(name) {
+    layer = name;
+    applyVisibility();
+  }
+
+  // The Object Capture mesh, in the same reconstruction coordinates as the
+  // splat (the mesh stage moved it there), so it inherits the world group's
+  // levelling. Drawn unlit: the photos already carry the room's lighting.
+  async function loadMesh(url) {
+    if (url === meshUrl) return;
+    meshUrl = url;
+    const dir = url.slice(0, url.lastIndexOf("/") + 1);
+    try {
+      const text = await (await fetch(url)).text();
+      const loader = new OBJLoader();
+      const mtlName = (text.match(/^mtllib\s+(.+)$/m) || [])[1];
+      if (mtlName) {
+        const materials = await new MTLLoader().setPath(dir).loadAsync(mtlName.trim());
+        materials.preload();
+        loader.setMaterials(materials);
+      }
+      const obj = loader.parse(text);
+      let triangles = 0;
+      obj.traverse((o) => {
+        if (!o.isMesh) return;
+        const old = Array.isArray(o.material) ? o.material[0] : o.material;
+        const map = old && old.map;
+        if (map) map.colorSpace = THREE.SRGBColorSpace;
+        o.material = new THREE.MeshBasicMaterial(map ? { map, side: THREE.DoubleSide } : { color: 0x9a9a9a, side: THREE.DoubleSide });
+        if (old && old !== o.material) old.dispose();
+        const g = o.geometry;
+        triangles += (g.index ? g.index.count : g.attributes.position.count) / 3;
+      });
+      if (url !== meshUrl) { discard(obj); return; } // superseded while loading
+      mesh = discard(mesh);
+      mesh = obj;
+      mesh.userData.triangles = Math.round(triangles);
+      world.add(mesh);
+      applyVisibility();
+    } catch (e) {
+      console.error("mesh load failed:", e);
+    }
   }
 
   // Frame the scene from the sparse cloud (reconstruction-space positions,
@@ -133,9 +202,8 @@ export function createViewer(canvas) {
         });
         pointCloud = discard(pointCloud);
         pointCloud = new THREE.Points(geo, mat);
-        pointCloud.visible = !splat; // a checkpoint supersedes the sparse cloud
         world.add(pointCloud);
-        rig.invalidate();
+        applyVisibility(); // a checkpoint or a mesh supersedes the sparse cloud
       })
       .catch((e) => console.error("sparse cloud load failed:", e));
   }
@@ -188,14 +256,13 @@ export function createViewer(canvas) {
 
   async function doLoadCheckpoint(url) {
     try {
-      const mesh = new SplatMesh({ url, lod: LOD });
-      await mesh.initialized;
-      world.add(mesh);
+      const loaded = new SplatMesh({ url, lod: LOD });
+      await loaded.initialized;
+      world.add(loaded);
       splat = discard(splat);
-      splat = mesh;
+      splat = loaded;
       currentCheckpointUrl = url;
-      if (pointCloud) pointCloud.visible = false;
-      rig.invalidate();
+      applyVisibility();
     } catch (e) {
       console.error("checkpoint load failed:", e);
     } finally {
@@ -208,6 +275,9 @@ export function createViewer(canvas) {
     pointCloud = discard(pointCloud);
     frusta = discard(frusta);
     splat = discard(splat);
+    mesh = discard(mesh);
+    meshUrl = null;
+    layer = "splat";
     currentCheckpointUrl = null;
     nextUrl = null;
     loading = false;
@@ -218,5 +288,8 @@ export function createViewer(canvas) {
     rig.resetView();
   }
 
-  return { loadSparse, setCameras, setFrustaVisible, loadCheckpoint, reset, resetView };
+  return {
+    loadSparse, setCameras, setFrustaVisible, loadCheckpoint, loadMesh, setLayer, reset, resetView,
+    get meshTriangles() { return mesh ? mesh.userData.triangles : null; },
+  };
 }
