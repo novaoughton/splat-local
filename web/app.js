@@ -332,6 +332,10 @@ function mountDone() {
   `;
   els = { artifactList: $("artifactList"), title: $("doneTitle"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn") };
   wireProjectButtons();
+  // A finished room opens from inside, among the capture cameras, where their
+  // frusta are clutter; they stay one click away.
+  frustaCheckbox.checked = false;
+  viewer.setFrustaVisible(false);
   els.cleanBtn.addEventListener("click", cleanProject);
   loadDisk();
 }

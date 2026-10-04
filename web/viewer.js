@@ -8,6 +8,7 @@ import { SplatMesh } from "@sparkjsdev/spark";
 import { createRig, LOD, percentile } from "splat-viewer/core.js";
 import { parsePLYAsync } from "splat-viewer/ply.js";
 import { estimateUp } from "./level.js";
+import { pickOpeningCamera } from "./opening-view.js";
 
 // The rig's default: COLMAP is +Y down, so the world group is turned 180° about X.
 const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
@@ -19,8 +20,9 @@ export function createViewer(canvas) {
   let pointCloud = null, frusta = null, splat = null;
   let frustaVisible = true;
   let loading = false, nextUrl = null, currentCheckpointUrl = null;
-  let home = null; // the framing fitToPositions chose, for resetView()
+  let home = null; // the framing frame() chose, for resetView()
   let lastPositions = null; // the sparse cloud, to reframe once the scene is levelled
+  let lastCameras = null; // capture cameras, for the opening view inside the room
 
   // Stand the reconstruction upright: turn the world so the up direction the
   // cameras imply (see level.js) becomes the viewer's vertical. Navigation —
@@ -49,10 +51,14 @@ export function createViewer(canvas) {
     return null;
   }
 
-  // Frame the camera on the parsed (reconstruction-space) point positions,
-  // clamping outliers.
-  function fitToPositions(positions) {
-    lastPositions = positions;
+  // Frame the scene from the sparse cloud (reconstruction-space positions,
+  // outliers clamped). With the capture cameras known it opens inside the
+  // room at one of them (see opening-view.js); before that — or for footage
+  // with no cameras — it looks in on the whole cloud from outside.
+  const MAX_PITCH = THREE.MathUtils.degToRad(10), MIN_PITCH = THREE.MathUtils.degToRad(-20);
+  function frame() {
+    const positions = lastPositions;
+    if (!positions) return;
     const n = positions.length / 3;
     const xs = new Array(n), ys = new Array(n), zs = new Array(n);
     for (let i = 0; i < n; i++) {
@@ -63,20 +69,37 @@ export function createViewer(canvas) {
     const lo = [percentile(xs, 0.05), percentile(ys, 0.05), percentile(zs, 0.05)];
     const hi = [percentile(xs, 0.95), percentile(ys, 0.95), percentile(zs, 0.95)];
     // The centre in viewer space, through the world group's flip and levelling.
-    const { x: cx, y: cy, z: cz } = new THREE.Vector3(
+    const centre = new THREE.Vector3(
       (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2,
     ).applyMatrix4(world.matrixWorld);
     const size = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.05);
     rig.radius = size / 2;
-
-    const dist = rig.radius * 2.4;
-    camera.position.set(cx + dist * 0.55, cy + dist * 0.4, cz + dist * 0.75);
     camera.near = Math.max(rig.radius * 0.01, 0.001);
     camera.far = rig.radius * 60;
     camera.updateProjectionMatrix();
-    controls.target.set(cx, cy, cz);
+
+    const inside = lastCameras && pickOpeningCamera(lastCameras, positions, rig.radius * 0.15);
+    if (inside) {
+      camera.position.set(...inside.position).applyMatrix4(world.matrixWorld);
+      // Keep the capture camera's heading, but not much of its tilt: it may
+      // have been pointed at the floor.
+      const dir = new THREE.Vector3(...inside.forward).applyQuaternion(world.quaternion).normalize();
+      let heading = new THREE.Vector3(dir.x, 0, dir.z);
+      if (heading.lengthSq() < 1e-4) heading = centre.clone().sub(camera.position).setY(0); // straight down
+      heading.normalize();
+      const pitch = THREE.MathUtils.clamp(Math.asin(dir.y), MIN_PITCH, MAX_PITCH);
+      dir.copy(heading).multiplyScalar(Math.cos(pitch)).setY(Math.sin(pitch));
+      // A target just ahead: drag-orbit then pivots close by, so it reads as
+      // looking around rather than swinging across the room.
+      controls.target.copy(camera.position).addScaledVector(dir, rig.radius * 0.5);
+    } else {
+      const dist = rig.radius * 2.4;
+      camera.position.set(centre.x + dist * 0.55, centre.y + dist * 0.4, centre.z + dist * 0.75);
+      controls.target.copy(centre);
+    }
     controls.update();
     home = { position: camera.position.clone(), target: controls.target.clone(), radius: rig.radius };
+    rig.invalidate();
   }
 
   // Back to the framing the scene opened with; the rig's own default (the
@@ -98,7 +121,8 @@ export function createViewer(canvas) {
       .then((r) => r.arrayBuffer())
       .then(parsePLYAsync)
       .then(({ positions, colors }) => {
-        fitToPositions(positions);
+        lastPositions = positions;
+        frame();
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -118,9 +142,10 @@ export function createViewer(canvas) {
 
   function setCameras(cameras) {
     frusta = discard(frusta);
+    lastCameras = cameras && cameras.length ? cameras : null;
     levelWorld(estimateUp(cameras));
-    if (lastPositions) fitToPositions(lastPositions); // reframe in the levelled scene
-    if (!cameras || !cameras.length) return;
+    frame(); // reframe in the levelled scene, from inside it
+    if (!lastCameras) return;
     const d = Math.max(rig.radius * 0.06, 0.05), hw = d * 0.5, hh = d * 0.375;
     const corners = [[-hw, -hh, -d], [hw, -hh, -d], [hw, hh, -d], [-hw, hh, -d]];
     const q = new THREE.Quaternion(), p = new THREE.Vector3(), v = new THREE.Vector3();
@@ -188,6 +213,7 @@ export function createViewer(canvas) {
     loading = false;
     home = null;
     lastPositions = null;
+    lastCameras = null;
     levelWorld(null);
     rig.resetView();
   }
