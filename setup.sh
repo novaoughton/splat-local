@@ -34,6 +34,17 @@ if [[ ! -x "$BRUSH_SRC_DIR/target/release/brush" && ! -x "$BRUSH_PREBUILT" ]]; t
   fi
 fi
 
+# Optional: mesh output. tools/objcap wraps Apple's Object Capture; it needs swiftc
+# (Xcode Command Line Tools). The mesh stage also builds it on first use if this didn't.
+OBJCAP_BIN="${OBJCAP_BIN:-vendor/objcap}"
+if need swiftc; then
+  say "Building the Object Capture helper (for mesh output)"
+  mkdir -p "$(dirname "$OBJCAP_BIN")"
+  swiftc -O tools/objcap/main.swift -o "$OBJCAP_BIN" || say "objcap build failed; mesh output will be unavailable"
+else
+  say "swiftc not found: mesh output needs the Xcode Command Line Tools (xcode-select --install)"
+fi
+
 # Optional: splat cleanup/compression (.spz/.sog exports)
 if need npm; then
   say "Priming splat-transform (optional, for cleanup + .spz/.sog export)"

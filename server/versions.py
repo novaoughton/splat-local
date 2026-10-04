@@ -29,7 +29,7 @@ def _package(name: str) -> str | None:
         return None
 
 
-def collect(pose_backend: str) -> dict:
+def collect(pose_backend: str, outputs: str = "splat") -> dict:
     ffmpeg = _first_line(["ffmpeg", "-version"])  # "ffmpeg version 8.1.2 Copyright ..."
     versions = {
         "splat_local": _first_line(["git", "describe", "--always", "--dirty"], cwd=_PROJECT_ROOT),
@@ -48,4 +48,7 @@ def collect(pose_backend: str) -> dict:
     if pose_backend == "da3":
         from .stages.poses_da3 import DA3_MODEL
         versions["da3_model"] = DA3_MODEL
+    if outputs in ("mesh", "both"):
+        # Object Capture is part of macOS (RealityKit), so the OS version is its version.
+        versions["macos"] = _first_line(["sw_vers", "-productVersion"])
     return versions

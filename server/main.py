@@ -28,7 +28,7 @@ async def _run_and_save(job: Job):
     try:
         # Probed off the event loop: the npx and brush calls take a second or two.
         try:
-            found = await asyncio.to_thread(versions.collect, job.pose_backend)
+            found = await asyncio.to_thread(versions.collect, job.pose_backend, job.outputs)
         except Exception:
             found = None  # a version probe must never stop the job itself
         job.update(versions=found)
@@ -96,14 +96,17 @@ async def create_job(
     preset: str = Form(DEFAULT_PRESET),
     pose_backend: str = Form("colmap"),
     name: str = Form(""),
+    outputs: str = Form("splat"),
 ):
     if preset not in PRESETS:
         raise HTTPException(400, f"unknown preset '{preset}'")
     if pose_backend not in ("colmap", "da3"):
         raise HTTPException(400, f"unknown pose_backend '{pose_backend}'")
+    if outputs not in pipeline.OUTPUTS:
+        raise HTTPException(400, f"unknown outputs '{outputs}'")
 
     job_id = uuid4().hex[:12]
-    job = Job(job_id, preset, pose_backend)
+    job = Job(job_id, preset, pose_backend, outputs)
     if not pipeline.try_start(job):
         raise HTTPException(409, "a job is already running")
 

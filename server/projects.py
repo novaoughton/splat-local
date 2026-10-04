@@ -39,6 +39,7 @@ def save(job: Job) -> None:
         # The values the run used, in case the preset is retuned later.
         "preset_settings": dataclasses.asdict(job.preset),
         "pose_backend": job.pose_backend,
+        "outputs": job.outputs,
         "saved": time.time(),
         "state": state,
     }
@@ -51,7 +52,7 @@ def save(job: Job) -> None:
 def _load(path: Path) -> Job | None:
     try:
         data = json.loads(path.read_text())
-        job = Job(data["id"], data["preset"], data["pose_backend"])
+        job = Job(data["id"], data["preset"], data["pose_backend"], data.get("outputs", "splat"))
         state = dict(data["state"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -109,8 +110,9 @@ def disk_bytes(folder: Path) -> int:
 
 # Working data a finished project no longer needs to be viewed or downloaded:
 # training snapshots (the final one is already copied to exports/scene.ply),
-# the pose solver's database and models, and the undistorted training images.
-_WORKING_DIRS = ("checkpoints", "colmap", "colmap_da3", "dataset")
+# the pose solver's database and models, the undistorted training images, and
+# Object Capture's input links and raw (unaligned) output.
+_WORKING_DIRS = ("checkpoints", "colmap", "colmap_da3", "dataset", "mesh_input", "mesh_raw")
 
 
 def _working_paths(job: Job) -> list[Path]:
@@ -187,7 +189,9 @@ def summary(job: Job) -> dict:
         "error": state.get("error"),
         "failed_stage": state.get("failed_stage"),
         "preset": job.preset_name,
+        "outputs": job.outputs,
         "gaussians": gaussians,
+        "triangles": (state.get("mesh") or {}).get("triangles"),
         "thumbnail": sample[0] if sample else None,
         "bytes": disk_bytes(job.work),
     }

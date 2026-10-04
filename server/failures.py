@@ -5,7 +5,7 @@ the technical detail; this is the part written for the person who filmed the roo
 """
 import re
 
-STAGE_LABEL = {"frames": "Frames", "poses": "Camera positions", "train": "Training", "export": "Export"}
+STAGE_LABEL = {"frames": "Frames", "poses": "Camera positions", "mesh": "Mesh", "train": "Training", "export": "Export"}
 
 CAPTURE_TIPS = [
     "Move slowly and smoothly, and don't swing quickly from one area to another.",
@@ -68,6 +68,30 @@ def _rules():
             title="Training produced no result",
             detail="The trainer finished without saving a scene. Run the project again; if it keeps "
                    "happening, the technical details below will help.",
+        )),
+        ("mesh", r"not supported on this Mac", lambda m: dict(
+            title="This Mac can't build meshes",
+            detail="Meshes use Apple's Object Capture, which needs an Apple Silicon Mac (or an Intel Mac "
+                   "with a recent AMD GPU) running macOS 12 or later. Choose Gaussian splat instead.",
+        )),
+        ("mesh", r"swiftc not found|failed to build", lambda m: dict(
+            title="The mesh helper couldn't be built",
+            detail="Building meshes needs Apple's Command Line Tools. Install them with: "
+                   "xcode-select --install, then run the project again.",
+        )),
+        ("mesh", r"frames were placed by both", lambda m: dict(
+            title="Couldn't line the mesh up with the splat",
+            detail="Object Capture and the camera-position step agreed on too few frames to place the "
+                   "mesh where the splat is. This usually comes from the footage: frames that don't "
+                   "overlap enough, or glass and other surfaces that are hard to track.",
+            tips=CAPTURE_TIPS, capture_guide=True,
+        )),
+        ("mesh", r"object capture failed|produced no mesh", lambda m: dict(
+            title="Couldn't build the mesh",
+            detail="Object Capture couldn't make a mesh from these frames. It needs plenty of overlap "
+                   "and surfaces with texture; glass walls and plain, close-up surfaces are the usual "
+                   "problems.",
+            tips=CAPTURE_TIPS, capture_guide=True,
         )),
         ("export", r"no trained checkpoint", lambda m: dict(
             title="Nothing to export",

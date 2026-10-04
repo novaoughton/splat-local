@@ -11,6 +11,8 @@
     "three": "/vendor/three/three.module.min.js",
     "three/addons/controls/OrbitControls.js": "/vendor/three/OrbitControls.js",
     "three/addons/postprocessing/Pass.js": "/vendor/three/Pass.js",
+    "three/addons/loaders/OBJLoader.js": "/vendor/three/OBJLoader.js",
+    "three/addons/loaders/MTLLoader.js": "/vendor/three/MTLLoader.js",
     "@sparkjsdev/spark": "/vendor/spark/spark.module.min.js",
     "splat-viewer/": "/viewer/"
   }
@@ -122,6 +124,31 @@
     cursor: pointer;
   }
   .view-btn:hover { color: var(--text); border-color: var(--accent); }
+  .layer-toggle {
+    position: absolute;
+    top: 86px;
+    right: 14px;
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(10,11,12,.55);
+  }
+  .layer-toggle button {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    background: none;
+    border: none;
+    padding: 5px 9px;
+    cursor: pointer;
+  }
+  .layer-toggle button + button { border-left: 1px solid var(--border); }
+  .layer-toggle button.on { color: #14100a; background: var(--accent); }
+  .mesh-note { font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+  .mesh-note:empty { display: none; }
+  .mesh-note b { color: var(--text); font-weight: 600; }
   .frusta-toggle {
     position: absolute;
     top: 14px;
@@ -410,6 +437,9 @@
         camera frusta
       </label>
       <button class="view-btn" id="resetViewBtn" hidden>reset view</button>
+      <div class="layer-toggle" id="layerToggle" hidden role="group" aria-label="Show splat or mesh">
+        <button data-layer="splat" class="on">splat</button><button data-layer="mesh">mesh</button>
+      </div>
       <div class="nav-hint">drag orbit · scroll zoom · WASD move · ←→ turn · ↑↓ look</div>
     </main>
   </div>

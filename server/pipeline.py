@@ -16,13 +16,18 @@ class JobCancelled(Exception):
     pass
 
 
+# What a job makes: a Gaussian splat, a textured mesh (Object Capture), or both.
+OUTPUTS = ("splat", "mesh", "both")
+
+
 class Job:
-    def __init__(self, job_id: str, preset_name: str, pose_backend: str):
+    def __init__(self, job_id: str, preset_name: str, pose_backend: str, outputs: str = "splat"):
         self.id = job_id
         self.work = JOBS_DIR / job_id
         self.preset_name = preset_name
         self.preset = presets.PRESETS[preset_name]
         self.pose_backend = pose_backend
+        self.outputs = outputs
         self.cancelled = False
         self.proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -39,6 +44,7 @@ class Job:
             "checkpoint": None,
             "artifacts": None,
             "error": None,
+            "outputs": outputs,
         }
 
     def file_url(self, rel_path: str) -> str:
@@ -142,28 +148,51 @@ def active_job_id() -> str | None:
     return job.id if job is not None and job.running else None
 
 
+def stage_names(outputs: str) -> list[str]:
+    """The stages a job runs. Poses always run: the splat trains on them, and the
+    mesh is lined up with them. The mesh goes first in "both": it takes minutes
+    where training takes a quarter of an hour, so it's ready to look at sooner."""
+    names = ["frames", "poses"]
+    if outputs in ("mesh", "both"):
+        names.append("mesh")
+    if outputs in ("splat", "both"):
+        names += ["train", "export"]
+    return names
+
+
 def _run_sync(job: Job):
     # Imported here, not at module scope: the stages import back from this
     # module for run_subprocess and JobCancelled.
     from .stages import export as export_stage
     from .stages import frames as frames_stage
+    from .stages import mesh as mesh_stage
     from .stages import poses_colmap
     from .stages import poses_da3
     from .stages import train_brush
 
     job.work.mkdir(parents=True, exist_ok=True)
     poses_stage = poses_da3 if job.pose_backend == "da3" else poses_colmap
-    stages = [
-        ("frames", frames_stage.run),
-        ("poses", poses_stage.run),
-        ("train", train_brush.run),
-        ("export", export_stage.run),
-    ]
+    runners = {
+        "frames": frames_stage.run,
+        "poses": poses_stage.run,
+        "mesh": mesh_stage.run,
+        "train": train_brush.run,
+        "export": export_stage.run,
+    }
     try:
-        for name, fn in stages:
+        for name in stage_names(job.outputs):
             job.check_cancelled()
             job.update(stage=name, progress=0.0, message=f"starting {name}")
-            fn(job, job.work, job.preset)
+            if name == "mesh" and job.outputs == "both":
+                # The splat doesn't depend on the mesh: record a mesh failure and carry on.
+                try:
+                    runners[name](job, job.work, job.preset)
+                except JobCancelled:
+                    raise
+                except Exception as exc:
+                    job.update(mesh_error=str(exc), mesh_failure=failures.explain("mesh", str(exc)))
+                continue
+            runners[name](job, job.work, job.preset)
         job.check_cancelled()
         job.update(stage="done", progress=1.0, message="done")
     except JobCancelled:

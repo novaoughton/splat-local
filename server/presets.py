@@ -16,6 +16,9 @@ class Preset:
     # Median splat opacity there was 0.127, so 0.15 halves the scene — a big win that needs
     # human visual sign-off first. 0.05 drops near-invisible splats only: safe as a default.
     view_opacity_min: float = 0.05
+    # Object Capture's detail level for the optional mesh (Preview/High/Max -> reduced/medium/full).
+    # Medium gave ~63k triangles for a bedroom in ~2 min; full is denser and slower.
+    mesh_detail: str = "medium"
 
 
 PRESETS = {
@@ -26,6 +29,7 @@ PRESETS = {
         growth_stop=6_000,
         max_splats=1_500_000,
         export_every=500,
+        mesh_detail="reduced",
     ),
     "high": Preset(
         frames=200,
@@ -49,6 +53,7 @@ PRESETS = {
         max_splats=6_000_000,
         export_every=1000,
         lpips_weight=0.25,
+        mesh_detail="full",
     ),
 }
 

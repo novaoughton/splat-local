@@ -12,9 +12,28 @@ const fileInput = $("fileInput");
 const resetViewBtn = $("resetViewBtn");
 const viewer = createViewer($("canvas"));
 resetViewBtn.addEventListener("click", () => viewer.resetView());
+// Splat or mesh, when a project has both.
+const layerToggle = $("layerToggle");
+let layerShown = "splat";
+layerToggle.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-layer]");
+  if (!b) return;
+  layerShown = b.dataset.layer;
+  viewer.setLayer(layerShown);
+  layerToggle.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  renderHud();
+});
 
-const STAGES = ["frames", "poses", "train", "export"];
-const STAGE_LABEL = { frames: "Frames", poses: "Poses", train: "Train", export: "Export" };
+const ALL_STAGES = ["frames", "poses", "mesh", "train", "export"];
+const STAGE_LABEL = { frames: "Frames", poses: "Poses", mesh: "Mesh", train: "Train", export: "Export" };
+// Mirrors server/pipeline.py stage_names(): poses always run; the mesh goes
+// before training in "both".
+function stagesFor(outputs) {
+  return ALL_STAGES.filter((s) =>
+    (s !== "mesh" || outputs === "mesh" || outputs === "both") &&
+    ((s !== "train" && s !== "export") || outputs !== "mesh"));
+}
+const OUTPUT_LABEL = { splat: "splat", mesh: "mesh", both: "splat + mesh" };
 
 let jobId = null;
 let projectName = null; // the open project's name, for the delete confirmation
@@ -69,7 +88,7 @@ function setStatusPill(stage) {
   statusDot.className = "dot" + (
     stage === "done" ? " good" :
     stage === "error" || stage === "cancelled" ? " bad" :
-    STAGES.includes(stage) ? " active" : ""
+    ALL_STAGES.includes(stage) ? " active" : ""
   );
 }
 
@@ -98,6 +117,14 @@ function mountIdle() {
       <input type="text" id="nameInput" maxlength="80" placeholder="named after the video" />
     </div>
     <div class="field">
+      <label for="outputSelect">Output</label>
+      <select id="outputSelect">
+        <option value="splat" selected>Gaussian splat: photoreal</option>
+        <option value="mesh">Mesh: textured, ~3 min</option>
+        <option value="both">Both: splat + aligned mesh</option>
+      </select>
+    </div>
+    <div class="field">
       <label>Preset</label>
       <select id="presetSelect">
         <option value="preview">Preview — ~8 min</option>
@@ -123,6 +150,7 @@ function mountIdle() {
     nameInput: $("nameInput"),
     projectsSlot: $("projectsSlot"),
     presetSelect: $("presetSelect"),
+    outputSelect: $("outputSelect"),
     poseSelect: $("poseSelect"),
     startBtn: $("startBtn"),
     startMsg: $("startMsg"),
@@ -158,7 +186,9 @@ function projectMeta(p) {
   const parts = [];
   if (p.created) parts.push(new Date(p.created * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
   if (p.preset !== "unknown") parts.push(p.preset);
+  if (p.outputs && p.outputs !== "splat") parts.push(OUTPUT_LABEL[p.outputs] || p.outputs);
   if (p.gaussians) parts.push(`${(p.gaussians / 1e6).toFixed(2)}M splats`);
+  else if (p.triangles) parts.push(`${(p.triangles / 1000).toFixed(0)}k triangles`);
   if (p.bytes != null) parts.push(humanSize(p.bytes));
   const status = projectStatus(p);
   if (status) parts.push(status);
@@ -285,14 +315,7 @@ function mountRunning() {
   sidebar.innerHTML = `
     <div class="eyebrow">reconstruction in progress</div>
     <div id="sourceSlot"></div>
-    <div class="stage-tracker" id="stageTracker">
-      ${STAGES.map((s) => `
-        <div class="stage-row" data-stage="${s}">
-          <span class="dot"></span>
-          <span class="label">${STAGE_LABEL[s]}</span>
-          <span class="detail" data-detail="${s}"></span>
-        </div>`).join("")}
-    </div>
+    <div class="stage-tracker" id="stageTracker"></div>
     <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
     <div class="status-msg" id="statusMsg">—</div>
     <div id="filmstripSlot"></div>
@@ -311,6 +334,7 @@ function mountRunning() {
     filmstripSlot: $("filmstripSlot"),
     cancelBtn: $("cancelBtn"),
   };
+  renderTracker("splat"); // until the job's state says otherwise
   els.cancelBtn.addEventListener("click", () => {
     els.cancelBtn.disabled = true;
     els.cancelBtn.textContent = "Cancelling…";
@@ -325,12 +349,13 @@ function mountDone() {
     <div class="eyebrow">reconstruction complete</div>
     <h2 class="panel-title" id="doneTitle">Scene ready</h2>
     <div class="artifact-list" id="artifactList"></div>
+    <div class="mesh-note" id="meshNote"></div>
     <div class="disk-note" id="diskNote"></div>
     <button class="btn" id="cleanBtn" hidden></button>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
-  els = { artifactList: $("artifactList"), title: $("doneTitle"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn") };
+  els = { artifactList: $("artifactList"), title: $("doneTitle"), meshNote: $("meshNote"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn") };
   wireProjectButtons();
   // A finished room opens from inside, among the capture cameras, where their
   // frusta are clutter; they stay one click away.
@@ -411,20 +436,36 @@ function renderSource() {
   els.sourceSlot.innerHTML = videoPlayerHTML(src, "<span>source footage</span>");
 }
 
+function renderTracker(outputs) {
+  els.tracker.dataset.outputs = outputs;
+  els.tracker.innerHTML = stagesFor(outputs).map((s) => `
+    <div class="stage-row" data-stage="${s}">
+      <span class="dot"></span>
+      <span class="label">${STAGE_LABEL[s]}</span>
+      <span class="detail" data-detail="${s}"></span>
+    </div>`).join("");
+}
+
 function updateRunning(state) {
   renderSource();
 
-  const idx = STAGES.indexOf(state.stage);
+  const outputs = state.outputs || "splat";
+  if (els.tracker.dataset.outputs !== outputs) renderTracker(outputs);
+  const stages = stagesFor(outputs);
+  const idx = stages.indexOf(state.stage);
   els.tracker.querySelectorAll(".stage-row").forEach((row) => {
     const s = row.dataset.stage;
-    const i = STAGES.indexOf(s);
+    const i = stages.indexOf(s);
     row.classList.toggle("done", idx > i || state.stage === "done");
     row.classList.toggle("active", idx === i);
   });
   const detail = els.tracker.querySelector('[data-detail="frames"]');
   if (state.frames?.count) detail.textContent = `${state.frames.count}`;
+  const meshDetail = els.tracker.querySelector('[data-detail="mesh"]');
+  if (meshDetail && state.mesh) meshDetail.textContent = `${(state.mesh.triangles / 1000).toFixed(0)}k tris`;
+  if (meshDetail && state.mesh_error) meshDetail.textContent = "failed";
   const trainDetail = els.tracker.querySelector('[data-detail="train"]');
-  if (state.checkpoint) trainDetail.textContent = `${state.checkpoint.step.toLocaleString()} / ${state.checkpoint.total_steps.toLocaleString()}`;
+  if (trainDetail && state.checkpoint) trainDetail.textContent = `${state.checkpoint.step.toLocaleString()} / ${state.checkpoint.total_steps.toLocaleString()}`;
 
   els.progressFill.style.width = `${Math.round((state.progress || 0) * 100)}%`;
   els.statusMsg.textContent = state.message || "";
@@ -450,13 +491,29 @@ function updateDone(state) {
   if (state.name) els.title.textContent = state.name;
   els.artifactList.innerHTML = (state.artifacts || []).map((a) => `
     <div class="artifact">
-      <div><div class="name">${a.name}</div><div class="size">${a.gaussians ? `${(a.gaussians / 1e6).toFixed(2)}M splats · ` : ""}${humanSize(a.bytes)}</div></div>
+      <div><div class="name">${a.name}</div><div class="size">${a.gaussians ? `${(a.gaussians / 1e6).toFixed(2)}M splats · ` : ""}${a.triangles ? `${(a.triangles / 1000).toFixed(0)}k triangles · ` : ""}${humanSize(a.bytes)}</div></div>
       <a class="btn" href="${a.url}" download>Download</a>
     </div>
   `).join("") || `<div class="center-note">No artifacts listed.</div>`;
+  els.meshNote.innerHTML = meshNoteHTML(state);
 }
 
-const STAGE_NAME = { frames: "frames", poses: "camera positions", train: "training", export: "export" };
+// A mesh that failed alongside a good splat ("both"), or one built from few of
+// the frames (Object Capture skips frames it can't use, e.g. glass rooms).
+function meshNoteHTML(state) {
+  if (state.mesh_failure) {
+    return `<b>The mesh couldn't be built:</b> ${escapeHTML(state.mesh_failure.title)}. The splat is unaffected.
+      ${state.mesh_failure.capture_guide ? `<a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a>` : ""}`;
+  }
+  const m = state.mesh;
+  if (m && m.frames_total && m.frames_used / m.frames_total < 0.7) {
+    return `<b>The mesh used ${m.frames_used} of ${m.frames_total} frames,</b> so it may be incomplete.
+      Object Capture skips frames it can't place; glass and plain close-ups are the usual cause.`;
+  }
+  return "";
+}
+
+const STAGE_NAME = { frames: "frames", poses: "camera positions", mesh: "mesh", train: "training", export: "export" };
 
 function updateError(state) {
   const cancelled = state.stage === "cancelled";
@@ -503,6 +560,9 @@ function updateViewer(state) {
     checkpointCount++;
     viewer.loadCheckpoint(state.checkpoint.url);
   }
+  if (state.mesh && state.mesh.url) viewer.loadMesh(state.mesh.url).then(renderHud);
+  // The splat/mesh switch, once both exist.
+  layerToggle.hidden = !(state.mesh && state.checkpoint);
   hudCheckpoint = state.checkpoint || null;
   // At most two lookups per file: when it appears, and again once the export
   // stage's measurements land.
@@ -545,8 +605,11 @@ async function plyVertexCount(url) {
 }
 
 function renderHud() {
-  const c = hudCheckpoint;
+  const triangles = viewer.meshTriangles;
+  const meshShown = triangles != null && (layerShown === "mesh" || !hudCheckpoint);
+  const c = meshShown ? null : hudCheckpoint;
   viewportHud.innerHTML = [
+    meshShown && `<div class="line">mesh <b>${triangles.toLocaleString()}</b> triangles</div>`,
     c && `<div class="line">checkpoint <b>${checkpointCount}</b></div>`,
     c && `<div class="line">step <b>${c.step.toLocaleString()}</b> / ${c.total_steps.toLocaleString()}</div>`,
     c && splatCount != null && `<div class="line">splats <b>${splatCount.toLocaleString()}</b></div>`,
@@ -585,6 +648,7 @@ function startJob() {
   form.append("video", selectedFile);
   form.append("preset", els.presetSelect.value);
   form.append("pose_backend", els.poseSelect.value);
+  form.append("outputs", els.outputSelect.value);
   form.append("name", els.nameInput.value);
   fetch("/api/jobs", { method: "POST", body: form })
     .then(async (r) => {
@@ -632,6 +696,9 @@ function resetToIdle() {
   lastCamerasCount = 0;
   frustaToggle.hidden = true;
   resetViewBtn.hidden = true;
+  layerToggle.hidden = true;
+  layerShown = "splat";
+  layerToggle.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.layer === "splat"));
   hudCheckpoint = null;
   splatCount = null;
   splatCountUrl = null;
