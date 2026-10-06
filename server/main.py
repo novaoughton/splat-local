@@ -231,15 +231,26 @@ async def job_file(job_id: str, path: str):
     return FileResponse(target)
 
 
+class AppFiles(StaticFiles):
+    """Static files the browser must revalidate on every load (a cheap 304 when
+    unchanged). With no Cache-Control, Safari guesses a lifetime and kept running
+    the old app.js and viewer modules after an update, even across reloads."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Mount the two viewer libraries individually rather than all of vendor/: that
 # directory also holds the Brush source tree and its build output (~5 GB), none
 # of which the browser has any business fetching.
-app.mount("/vendor/spark", StaticFiles(directory="vendor/spark"), name="vendor_spark")
-app.mount("/vendor/three", StaticFiles(directory="vendor/three"), name="vendor_three")
+app.mount("/vendor/spark", AppFiles(directory="vendor/spark"), name="vendor_spark")
+app.mount("/vendor/three", AppFiles(directory="vendor/three"), name="vendor_three")
 # The viewer engine web/ and site/ share; pages resolve it via the "splat-viewer/"
 # import map entry, so this path and the site's ./viewer/ can differ freely.
-app.mount("/viewer", StaticFiles(directory="viewer"), name="viewer")
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+app.mount("/viewer", AppFiles(directory="viewer"), name="viewer")
+app.mount("/", AppFiles(directory="web", html=True), name="web")
 
 
 if __name__ == "__main__":
