@@ -179,8 +179,8 @@ export function createRig(canvas, { idleSpin = false } = {}) {
     if (pageVisible) invalidate();
   });
 
-  // --- fly navigation: WASD move, arrows turn and look -----------------------
-  const NAV_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d"]);
+  // --- fly navigation: WASD move, Q/E down/up (as in Unity), arrows turn and look
+  const NAV_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d", "q", "e"]);
   const keys = new Set();
   const normKey = (e) => (e.key.length === 1 ? e.key.toLowerCase() : e.key);
 
@@ -213,6 +213,8 @@ export function createRig(canvas, { idleSpin = false } = {}) {
     if (keys.has("s")) _move.sub(_dir);
     if (keys.has("a")) _move.sub(_right);
     if (keys.has("d")) _move.add(_right);
+    if (keys.has("e")) _move.add(_up);
+    if (keys.has("q")) _move.sub(_up);
     if (_move.lengthSq()) {
       _move.normalize().multiplyScalar(radius * 0.6 * dt); // cross the scene in a few seconds
       camera.position.add(_move);
