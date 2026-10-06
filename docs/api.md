@@ -2,12 +2,12 @@
 
 ## Endpoints
 
-- `GET /api/presets` — each preset's settings (`frames`, `max_resolution`, `total_steps`, ...). The start screen uses `frames` with the chosen video's length to warn when frames would be more than 1.5 s apart.
+- `GET /api/presets` — each preset's settings (`frame_spacing_s`, `min_frames`, `max_video_s`, `max_resolution`, `total_steps`, ...). A preset takes the sharpest frame in every `frame_spacing_s` of video (Preview 1.0 s, High 0.8 s, Max 0.7 s), and at least `min_frames`, so longer videos get more frames. The start screen uses these with the chosen video's length to show the frame count, and stops a video longer than `max_video_s` (`null` means no limit).
 - `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "failed_stage", "preset", "outputs", "gaussians", "triangles", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
 - `DELETE /api/jobs/{id}` — delete the project and its whole folder, downloads included. 409 if the job is still running (cancel it first).
 - `GET /api/jobs/{id}/disk` — `{"bytes", "reclaimable"}`: the folder's size, and what clean-up would free (0 unless the project finished).
 - `POST /api/jobs/{id}/clean` — remove a finished project's working files: `checkpoints/`, `colmap/`, `colmap_da3/`, `dataset/`, `mesh_input/`, `mesh_raw/` and every frame not used as a thumbnail. The exports, source video, `sparse.ply` and `project.json` stay, so the project opens and views as before; it just can't be retrained without starting again from the video. Returns `{"freed", "bytes"}` and sets `state.cleaned`. 409 unless the project finished.
-- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension), `outputs` (`splat|mesh|both`, default `splat`; see [Mesh output](#mesh-output)). Returns `{"job_id": str}`. 409 if a job is already running.
+- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension), `outputs` (`splat|mesh|both`, default `splat`; see [Mesh output](#mesh-output)). Returns `{"job_id": str}`. 409 if a job is already running; 400 if the video is longer than the preset's `max_video_s`.
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
 - `GET /api/jobs/{id}/events` — SSE stream. On connect, emits current state, then updates.
@@ -30,9 +30,10 @@ Every event is `event: state` with a full JSON job snapshot:
   "progress": 0.42,
   "message": "human-readable status line",
   "input_url": "/api/jobs/abc123/files/input.mp4",
-  "frames": {"count": 200, "sample": ["/api/jobs/abc123/files/frames/00001.jpg"]},
+  "frames": {"count": 409, "spacing_s": 0.8, "sample": ["/api/jobs/abc123/files/frames/00001.jpg"]},
   "sparse_url": "/api/jobs/abc123/files/sparse.ply",
   "cameras": [{"position": [x,y,z], "rotation": [qw,qx,qy,qz]}],
+  "stray_cameras": ["00123.jpg"],
   "checkpoint": {"url": ".../checkpoints/splat_10000.ply", "step": 10000, "total_steps": 30000},
   "artifacts": [{"name": "scene.ply", "url": "...", "bytes": 123, "gaussians": 135575, "fill_ratio": 46.7}],
   "error": null,
@@ -90,7 +91,7 @@ Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and t
 Each job folder carries a `project.json`, written when the job starts and again when it ends:
 
 ```json
-{"schema": 1, "id": "abc123", "preset": "high", "preset_settings": {"frames": 200, "total_steps": 18000, "...": "..."},
+{"schema": 1, "id": "abc123", "preset": "high", "preset_settings": {"frame_spacing_s": 0.8, "total_steps": 18000, "...": "..."},
  "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
 ```
 

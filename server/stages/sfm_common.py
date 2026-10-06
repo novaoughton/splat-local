@@ -24,6 +24,8 @@ def write_sparse_ply(path: Path, recon) -> None:
 def cameras_json(recon) -> list[dict]:
     cameras = []
     for image in recon.images.values():
+        if not image.has_pose:  # deregistered, e.g. a stray camera
+            continue
         world_from_cam = image.cam_from_world().inverse()
         qx, qy, qz, qw = world_from_cam.rotation.quat
         cameras.append({

@@ -34,6 +34,13 @@ GATE_MIN_OBS_PER_IMAGE = 200.0
 GATE_MAX_TRAJECTORY_OUTLIER_RATIO = 0.05
 TRAJECTORY_JUMP_FACTOR = 10.0
 
+# A camera further than this from the point cloud's centre, in units of the cloud's
+# median spread, was placed outside the room. Good cameras sit within 2.4 across
+# every scene so far; Library Study Room Full (High, 545 frames) had 11 at 4.2-344.
+# Left in, training grew ~19k splats out there to reproduce those frames, and the
+# viewer opened at one of them looking at nothing but blur.
+STRAY_CAMERA_SPREADS = 3.5
+
 
 def _mapper_mode() -> str:
     mode = os.environ.get(MAPPER_ENV, "auto").strip().lower()
@@ -60,6 +67,29 @@ def _trajectory_outlier_ratio(recon) -> float:
     if median <= 0.0:
         return 1.0
     return sum(s > TRAJECTORY_JUMP_FACTOR * median for s in steps) / len(steps)
+
+
+def drop_stray_cameras(recon) -> list[str]:
+    """Deregister cameras placed far outside the point cloud; return their names.
+
+    The gate above judges a whole solve, so a handful of misplaced frames in an
+    otherwise good one gets through. Dropping them loses a few views; keeping them
+    puts splats outside the room.
+    """
+    points = np.array([p.xyz for p in recon.points3D.values()])
+    if len(points) < 10:
+        return []
+    centre = np.median(points, axis=0)
+    spread = float(np.median(np.linalg.norm(points - centre, axis=1)))
+    if spread <= 0.0:
+        return []
+    stray = [
+        im for im in recon.images.values()
+        if im.has_pose and np.linalg.norm(im.projection_center() - centre) > STRAY_CAMERA_SPREADS * spread
+    ]
+    for frame_id in {im.frame_id for im in stray}:
+        recon.deregister_frame(frame_id)
+    return sorted(im.name for im in stray)
 
 
 def gate_metrics(recon, n_frames: int) -> dict:
@@ -265,6 +295,10 @@ def run(job, work: Path, preset):
         )
     job.check_cancelled()
 
+    stray = drop_stray_cameras(best)
+    registered = best.num_reg_images()
+    dropped = f", dropped {len(stray)} placed outside the room" if stray else ""
+
     model_dir = colmap_dir / "sparse" / "0"
     model_dir.mkdir(parents=True, exist_ok=True)
     best.write(model_dir)
@@ -283,7 +317,8 @@ def run(job, work: Path, preset):
 
     job.update(
         progress=1.0,
-        message=f"registered {registered}/{n_frames} frames",
+        message=f"registered {registered}/{n_frames} frames{dropped}",
         sparse_url=job.file_url("sparse.ply"),
         cameras=cameras,
+        stray_cameras=stray,
     )
