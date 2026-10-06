@@ -261,7 +261,7 @@ function renderVideoPreview() {
     videoSrc(),
     `<span>${selectedFile.name} · ${humanSize(selectedFile.size)}</span><button id="clearBtn">remove</button>`,
   );
-  // The duration decides whether the preset's frames will be close enough together.
+  // The duration sets how many frames the preset will take.
   els.previewSlot.querySelector("video").addEventListener("loadedmetadata", (e) => {
     selectedDuration = Number.isFinite(e.target.duration) ? e.target.duration : null;
     updateLengthWarning();
@@ -278,10 +278,13 @@ function renderVideoPreview() {
   els.startBtn.disabled = false;
 }
 
-// Presets take a fixed number of frames, so a long video spreads them out. Past
-// ~1.5 s apart they stop overlapping enough for poses: the 9-minute bedroom test
-// failed at 2.8 s, while 0.7 s (desk) and 1.0 s (a 3-minute clip) worked.
-const MAX_FRAME_GAP_S = 1.5;
+// Presets take one frame per `frame_spacing_s` of video (at least `min_frames`), so a
+// longer video gets more frames rather than sparser ones. Mirrors server/presets.py
+// frame_plan.
+function framePlan(p, duration) {
+  const count = Math.max(p.min_frames, Math.round(Math.max(duration, 0.1) / p.frame_spacing_s));
+  return { count, spacing: duration / count };
+}
 let presetInfo = null; // GET /api/presets
 let selectedDuration = null; // seconds, once the preview has read the metadata
 
@@ -295,20 +298,23 @@ function formatDuration(s) {
 function updateLengthWarning() {
   if (currentPanel !== "idle" || !els.lengthWarn) return;
   const preset = els.presetSelect.value;
-  const frames = presetInfo?.[preset]?.frames;
-  const gap = selectedDuration && frames ? selectedDuration / frames : 0;
-  if (gap <= MAX_FRAME_GAP_S) { els.lengthWarn.innerHTML = ""; return; }
+  const info = presetInfo?.[preset];
+  if (!selectedDuration || !info?.frame_spacing_s) { els.lengthWarn.innerHTML = ""; return; }
   const labelOf = (name) => [...els.presetSelect.options].find((o) => o.value === name)?.textContent.split(" —")[0] || name;
   const label = labelOf(preset);
-  const better = Object.entries(presetInfo)
-    .filter(([name, p]) => name !== preset && selectedDuration / p.frames <= MAX_FRAME_GAP_S)
-    .sort((a, b) => a[1].frames - b[1].frames)[0];
-  els.lengthWarn.innerHTML = `
-    <p><b>This video may be too long for ${escapeHTML(label)}.</b> It runs ${formatDuration(selectedDuration)}, and ${escapeHTML(label)} uses ${frames} frames,
-    so they'd be about ${gap.toFixed(1)} s apart. That's usually too far for the camera positions to be worked out.</p>
-    <p>${better ? `The ${escapeHTML(labelOf(better[0]))} preset (${better[1].frames} frames) keeps them ${(selectedDuration / better[1].frames).toFixed(1)} s apart. Or t` : "T"}rim it to the best 2–3 minutes, or film one video per area.
-    <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a></p>
-  `;
+  const fits = (p) => p.max_video_s == null || selectedDuration <= p.max_video_s;
+  els.lengthWarn.classList.toggle("note", fits(info));
+  if (!fits(info)) {
+    const other = Object.entries(presetInfo).find(([name, p]) => name !== preset && fits(p));
+    els.lengthWarn.innerHTML = `
+      <p><b>This video is too long for ${escapeHTML(label)}.</b> It runs ${formatDuration(selectedDuration)}, and ${escapeHTML(label)} takes up to ${formatDuration(info.max_video_s)}.</p>
+      <p>${other ? `The ${escapeHTML(labelOf(other[0]))} preset takes it. Or t` : "T"}rim it to the best 2–3 minutes, or film one video per area.
+      <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a></p>
+    `;
+    return;
+  }
+  const { count, spacing } = framePlan(info, selectedDuration);
+  els.lengthWarn.innerHTML = `<p>${escapeHTML(label)} will use about <b>${count} frames</b> from this ${formatDuration(selectedDuration)} video, one every ${spacing.toFixed(1)} s.</p>`;
 }
 
 function mountRunning() {
@@ -653,6 +659,10 @@ function startJob() {
   fetch("/api/jobs", { method: "POST", body: form })
     .then(async (r) => {
       if (r.status === 409) throw new Error("A job is already running.");
+      if (r.status === 400) {
+        const detail = (await r.json().catch(() => ({}))).detail;
+        if (detail) throw new Error(`Couldn't start: ${detail}.`);
+      }
       if (!r.ok) throw new Error(`Failed to start job (${r.status}).`);
       return r.json();
     })

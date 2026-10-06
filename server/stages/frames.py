@@ -1,3 +1,4 @@
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -5,11 +6,12 @@ from pathlib import Path
 from PIL import Image
 
 from ..pipeline import run_subprocess
+from ..presets import frame_plan
 
 _SHARP_FRAMES_BIN = str(Path(sys.executable).parent / "sharp-frames")
 
 
-def _ffprobe_duration(video: Path) -> float:
+def probe_duration(video: Path) -> float:
     out = subprocess.run(
         [
             "ffprobe", "-v", "error",
@@ -22,12 +24,10 @@ def _ffprobe_duration(video: Path) -> float:
     return float(out.stdout.strip())
 
 
-def _ffmpeg_fallback(job, video: Path, out_dir: Path, n_frames: int):
-    duration = _ffprobe_duration(video)
-    fps = max(n_frames / max(duration, 0.1), 0.1)
+def _ffmpeg_fallback(job, video: Path, out_dir: Path, spacing: float):
     run_subprocess(job, [
         "ffmpeg", "-y", "-i", str(video),
-        "-vf", f"fps={fps}", "-q:v", "2",
+        "-vf", f"fps={1 / spacing}", "-q:v", "2",
         str(out_dir / "%05d.jpg"),
     ])
 
@@ -37,24 +37,27 @@ def run(job, work: Path, preset):
     out_dir = work / "frames"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    job.update(message="selecting sharpest frames", progress=0.05)
-    # extract ~3x the target so best-n has real candidates (default 10 fps +
-    # min-buffer 3 caps selection at duration*10/3 frames on short videos)
-    duration = _ffprobe_duration(video)
-    fps = min(30, max(10, -(-3 * preset.frames // max(int(duration), 1))))
+    duration = probe_duration(video)
+    count, spacing = frame_plan(preset, duration)
+    job.update(message=f"selecting the sharpest frame every {spacing:.2f} s (~{count} frames)", progress=0.05)
+    # Candidates at 10 fps (more if the spacing is short, so every window has at least
+    # 3), then batched selection keeps the sharpest candidate in each window. Unlike
+    # best-n, which picks the sharpest N anywhere, this can't bunch frames and leave gaps.
+    fps = min(30, max(10, math.ceil(3 / spacing)))
+    batch = max(1, round(fps * spacing))
     try:
         run_subprocess(job, [
             _SHARP_FRAMES_BIN, str(video), str(out_dir),
             "--fps", str(fps),
-            "--min-buffer", "2",
-            "--num-frames", str(preset.frames),
+            "--selection-method", "batched",
+            "--batch-size", str(batch),
+            "--batch-buffer", "0",
             "--format", "jpg",
-            "--selection-method", "best-n",
             "--force-overwrite",
         ])
     except (subprocess.CalledProcessError, FileNotFoundError):
         job.update(message="sharp-frames failed, falling back to uniform ffmpeg extraction")
-        _ffmpeg_fallback(job, video, out_dir, preset.frames)
+        _ffmpeg_fallback(job, video, out_dir, spacing)
 
     job.check_cancelled()
 
@@ -73,7 +76,7 @@ def run(job, work: Path, preset):
     sample = [job.file_url(f"frames/{p.name}") for p in image_files[::stride][:8]]
 
     job.update(
-        frames={"count": len(image_files), "sample": sample},
+        frames={"count": len(image_files), "spacing_s": round(duration / len(image_files), 2), "sample": sample},
         progress=1.0,
         message=f"extracted {len(image_files)} frames",
     )

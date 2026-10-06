@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import pipeline, projects, versions
 from .presets import DEFAULT_PRESET, PRESETS
 from .pipeline import Job
+from .stages import frames as frames_stage
 
 app = FastAPI()
 
@@ -40,7 +41,7 @@ async def _run_and_save(job: Job):
 
 @app.get("/api/presets")
 async def list_presets():
-    """Each preset's settings, so the UI can reason about frame counts."""
+    """Each preset's settings, so the UI can estimate frame counts and length limits."""
     return {name: dataclasses.asdict(preset) for name, preset in PRESETS.items()}
 
 
@@ -117,6 +118,15 @@ async def create_job(
         ext = Path(video.filename or "input.mp4").suffix or ".mp4"
         with (job.work / f"input{ext}").open("wb") as f:
             shutil.copyfileobj(video.file, f)
+        # The start screen already stops an over-long video; this catches other clients.
+        limit = PRESETS[preset].max_video_s
+        if limit is not None:
+            duration = await asyncio.to_thread(frames_stage.probe_duration, job.work / f"input{ext}")
+            if duration > limit:
+                shutil.rmtree(job.work, ignore_errors=True)
+                raise HTTPException(
+                    400, f"the video runs {duration:.0f} s; the '{preset}' preset takes up to {limit:.0f} s",
+                )
         # input_url is published so any tab can show the footage next to the
         # reconstruction — the one that uploaded still has the bytes, but a
         # reload or a second tab only has the job id.

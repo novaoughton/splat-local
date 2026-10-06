@@ -71,11 +71,13 @@ not a replacement for the native pipeline's reconstruction quality.
 
 Upload a video, pick a preset, watch it build. Presets:
 
-| Preset  | Frames | Res  | Steps | Poses    | Training   | Total             |
-|---------|--------|------|-------|----------|------------|-------------------|
-| Preview | 100    | 1536 | 10k   | ~1 min   | ~7 min     | ~8 min ¹          |
-| High    | 200    | 2048 | 18k   | 2–10 min | ~11 min    | **~14 min** ²     |
-| Max     | 250    | 2560 | 45k   | 10–20 min| ~35–50 min | ~45 min – 1.2 h ¹ |
+| Preset  | Frame every | Res  | Steps | Poses    | Training   | Total             |
+|---------|-------------|------|-------|----------|------------|-------------------|
+| Preview | 1.0 s       | 1536 | 10k   | ~1 min   | ~7 min     | ~8 min ¹          |
+| High    | 0.8 s       | 2048 | 18k   | 2–10 min | ~11 min    | **~14 min** ²     |
+| Max     | 0.7 s       | 2560 | 45k   | 10–20 min| ~35–50 min | ~45 min – 1.2 h ¹ |
+
+A preset keeps the sharpest frame in each window of that length (at least 60 / 80 / 100 frames), so a 3-minute video gets about 180 / 225 / 260 frames and a longer one more. The times above were measured or estimated at 100–250 frames; pose time grows faster than frame count.
 
 <sub>Measured on an M5 Pro MacBook Pro (18-core, 48 GB unified memory).</sub>
 
