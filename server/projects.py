@@ -7,6 +7,7 @@ space can be reclaimed from the app.
 """
 import dataclasses
 import json
+import math
 import os
 import shutil
 import time
@@ -27,6 +28,47 @@ def clean_name(name: str | None, fallback: str) -> str:
     """Collapse whitespace and cap the length; an empty name falls back."""
     name = " ".join((name or "").split())[:MAX_NAME_LENGTH]
     return name or fallback
+
+
+def clean_transform(data) -> dict:
+    """Validate the viewer's transform; raise ValueError on anything malformed.
+
+    `assets` places the splat and mesh together; `anchor` places the grid, which
+    is the frame exports will be re-expressed in (M3). Both are in the levelled
+    viewer frame `level_up` describes; rotations are degrees, order YXZ (Unity's).
+    """
+    def vec(value, name, n=3):
+        if not isinstance(value, (list, tuple)) or len(value) != n:
+            raise ValueError(f"{name} must be a list of {n} numbers")
+        out = []
+        for v in value:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise ValueError(f"{name} must be finite numbers")
+            out.append(float(v))
+        return out
+
+    if not isinstance(data, dict):
+        raise ValueError("transform must be an object")
+    assets, anchor = data.get("assets"), data.get("anchor")
+    if not isinstance(assets, dict) or not isinstance(anchor, dict):
+        raise ValueError("transform needs 'assets' and 'anchor'")
+    scale = vec([assets.get("scale")], "assets.scale", 1)[0]
+    if scale <= 0:
+        raise ValueError("assets.scale must be positive")
+    level_up = data.get("level_up")
+    return {
+        "assets": {
+            "position": vec(assets.get("position"), "assets.position"),
+            "rotation_deg": vec(assets.get("rotation_deg"), "assets.rotation_deg"),
+            "scale": scale,
+        },
+        "anchor": {
+            "position": vec(anchor.get("position"), "anchor.position"),
+            "rotation_deg": vec(anchor.get("rotation_deg"), "anchor.rotation_deg"),
+        },
+        "scaled": bool(data.get("scaled", False)),
+        "level_up": None if level_up is None else vec(level_up, "level_up"),
+    }
 
 
 def save(job: Job) -> None:

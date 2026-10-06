@@ -78,6 +78,23 @@ async def clean_job(job_id: str):
     return {"freed": freed, "bytes": projects.disk_bytes(job.work)}
 
 
+@app.put("/api/jobs/{job_id}/transform")
+async def set_transform(job_id: str, request: Request):
+    """Save the viewer's asset and anchor transforms with the project."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.running:
+        raise HTTPException(409, "the job is still running")
+    try:
+        transform = projects.clean_transform(await request.json())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    job.update(transform=transform)
+    await asyncio.to_thread(projects.save, job)
+    return {"transform": transform}
+
+
 @app.delete("/api/jobs/{job_id}")
 async def delete_job(job_id: str):
     """Delete a project and its whole folder, downloads included."""

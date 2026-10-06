@@ -1,4 +1,6 @@
 import { createViewer } from "./viewer.js";
+import { CELL_STEPS, formatCell } from "./grid.js";
+import { createTransformPanel } from "./transform-panel.js";
 
 const $ = (id) => document.getElementById(id);
 const sidebar = $("sidebar");
@@ -54,6 +56,60 @@ let splatCountUrl = null; // the checkpoint URL splatCount belongs to
 let splatCountKey = null; // last lookup made, so state events don't repeat it
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
+
+// Grid and transforms, for finished projects. Edits save with the project a
+// moment after the last change; nothing is baked into the downloads yet.
+const viewStack = $("viewStack");
+const gridCheckbox = $("gridCheckbox");
+const gridSlider = $("gridSlider");
+const gridValue = $("gridValue");
+const transformBtn = $("transformBtn");
+let transformApplied = false; // the open project's saved transform is on screen
+
+function updateGrid() {
+  const cell = CELL_STEPS[+gridSlider.value];
+  gridValue.textContent = formatCell(cell, transformPanel.scaled);
+  viewer.setGrid({ visible: gridCheckbox.checked, cell });
+}
+gridCheckbox.addEventListener("change", () => { updateGrid(); gridCheckbox.blur(); });
+gridSlider.addEventListener("input", updateGrid);
+gridSlider.addEventListener("change", () => gridSlider.blur()); // hand WASD back to the viewer
+
+let saveTimer = null;
+function saveTransform() {
+  clearTimeout(saveTimer);
+  const id = jobId;
+  saveTimer = setTimeout(() => {
+    if (!id || id !== jobId) return;
+    fetch(`/api/jobs/${encodeURIComponent(id)}/transform`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...viewer.getTransform(), scaled: transformPanel.scaled }),
+    }).then((r) => { if (!r.ok) console.error("saving the transform failed:", r.status); })
+      .catch((e) => console.error("saving the transform failed:", e));
+  }, 500);
+}
+
+const transformPanel = createTransformPanel($("transformPanel"), viewer, {
+  onChange() { saveTransform(); updateGrid(); },
+  onAnchorTab() { if (!gridCheckbox.checked) { gridCheckbox.checked = true; updateGrid(); } },
+});
+transformBtn.addEventListener("click", () => setTransformOpen(transformBtn.getAttribute("aria-expanded") !== "true"));
+
+function setTransformOpen(open) {
+  transformBtn.setAttribute("aria-expanded", String(open));
+  transformBtn.classList.toggle("on", open);
+  transformPanel.setOpen(open);
+}
+
+function hideViewTools() {
+  setTransformOpen(false);
+  viewStack.hidden = true;
+  gridCheckbox.checked = false;
+  transformPanel.scaled = false;
+  transformApplied = false;
+  updateGrid();
+}
 
 function escapeHTML(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -367,6 +423,7 @@ function mountDone() {
   // frusta are clutter; they stay one click away.
   frustaCheckbox.checked = false;
   viewer.setFrustaVisible(false);
+  viewStack.hidden = false;
   els.cleanBtn.addEventListener("click", cleanProject);
   loadDisk();
 }
@@ -553,6 +610,13 @@ function updateError(state) {
 }
 
 function updateViewer(state) {
+  // Before setCameras(): the opening view is framed through the transform.
+  if (currentPanel === "done" && !transformApplied) {
+    transformApplied = true;
+    viewer.setTransform(state.transform || null);
+    transformPanel.scaled = !!state.transform?.scaled;
+    updateGrid();
+  }
   if (state.sparse_url && state.sparse_url !== lastSparseUrl) {
     lastSparseUrl = state.sparse_url;
     viewer.loadSparse(state.sparse_url);
@@ -707,6 +771,7 @@ function resetToIdle() {
   frustaToggle.hidden = true;
   resetViewBtn.hidden = true;
   layerToggle.hidden = true;
+  hideViewTools();
   layerShown = "splat";
   layerToggle.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.layer === "splat"));
   hudCheckpoint = null;
