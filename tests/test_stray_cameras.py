@@ -7,7 +7,7 @@ import numpy as np
 
 # CI has no pycolmap; drop_stray_cameras only needs a reconstruction-shaped object.
 sys.modules.setdefault("pycolmap", types.ModuleType("pycolmap"))
-from server.stages.poses_colmap import drop_stray_cameras  # noqa: E402
+from server.stages.poses_colmap import drop_off_path_cameras, drop_stray_cameras  # noqa: E402
 
 
 class FakeRecon:
@@ -45,6 +45,33 @@ class StrayCameraTests(unittest.TestCase):
     def test_too_few_points_to_judge(self):
         recon = FakeRecon([[0, 0, 0]] * 5, [[1000, 0, 0]])
         self.assertEqual(drop_stray_cameras(recon), [])
+
+
+def walk(n=40, misplaced=()):
+    """A camera every 0.1 along x, turning back at the middle; `misplaced` indices jump."""
+    cams = []
+    for i in range(n):
+        x = 0.1 * i if i < n // 2 else 0.1 * (n - i)
+        cams.append([x, 0.0, 0.0 if i < n // 2 else 0.5])
+    for i in misplaced:
+        cams[i] = [cams[i][0], 5.0, 0.0]
+    return room(cams)
+
+
+class OffPathCameraTests(unittest.TestCase):
+    def test_a_smooth_walk_with_a_turn_keeps_every_camera(self):
+        self.assertEqual(drop_off_path_cameras(walk()), [])
+
+    def test_a_flung_camera_is_dropped(self):
+        recon = walk(misplaced=[12])
+        self.assertEqual(drop_off_path_cameras(recon), ["00012.jpg"])
+        self.assertFalse(recon.images[12].has_pose)
+
+    def test_a_short_misplaced_run_is_dropped_too(self):
+        self.assertEqual(drop_off_path_cameras(walk(misplaced=[25, 26, 27])), ["00025.jpg", "00026.jpg", "00027.jpg"])
+
+    def test_too_few_cameras_to_judge(self):
+        self.assertEqual(drop_off_path_cameras(walk(n=8, misplaced=[4])), [])
 
 
 if __name__ == "__main__":

@@ -54,8 +54,12 @@ PRESETS = {
         # growth_stop stays at 15k on purpose — it is the arm that was actually measured.
         total_steps=18_000,
         growth_stop=15_000,
+        # 4M is this 24 GB Mac's ceiling: Library Study Room Full (545 frames) hit it and
+        # training peaked at 16 GB with 4.4 GB of swap growth (~3 KB per splat at peak).
         max_splats=4_000_000,
         export_every=1000,
+        # The same run: 7m15s of 4K took 52 min end to end and peaked at 16 GB.
+        max_video_s=480,
     ),
     "max": Preset(
         frame_spacing_s=0.7,
@@ -63,7 +67,9 @@ PRESETS = {
         max_resolution=2560,
         total_steps=45_000,
         growth_stop=25_000,
-        max_splats=6_000_000,
+        # 5M, not 6M: at ~3 KB per splat (High's measured peak) 6M would need ~21 GB of
+        # a 24 GB Mac before the app's own baseline. Confirm with a Max debug report.
+        max_splats=5_000_000,
         export_every=1000,
         # No LPIPS: Brush runs VGG-LPIPS on the full-size render with gradients, and at
         # 2560 px that took training past 25 GB within 90 s (4.1 GB without it), stalling

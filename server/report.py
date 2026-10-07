@@ -337,7 +337,7 @@ def warnings(rec: Recorder) -> list[str]:
     if frames and cameras and cameras / frames < 0.8:
         out.append(f"Only {cameras}/{frames} frames ({cameras / frames:.0%}) were placed by camera solving.")
     if state.get("stray_cameras"):
-        out.append(f"{len(state['stray_cameras'])} camera(s) were placed outside the room and dropped.")
+        out.append(f"{len(state['stray_cameras'])} misplaced camera(s) (off the walking path or outside the room) were dropped.")
     gaussians = next((a.get("gaussians") for a in state.get("artifacts") or [] if a.get("name") == "scene.ply"), None)
     if gaussians and gaussians >= rec.job.preset.max_splats:
         out.append(f"Training hit the {rec.job.preset.max_splats:,} splat cap; growth stopped early.")

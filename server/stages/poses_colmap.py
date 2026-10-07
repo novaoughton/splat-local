@@ -34,6 +34,9 @@ GATE_MIN_MEAN_TRACK_LENGTH = 4.0
 GATE_MIN_OBS_PER_IMAGE = 200.0
 GATE_MAX_TRAJECTORY_OUTLIER_RATIO = 0.05
 TRAJECTORY_JUMP_FACTOR = 10.0
+# Off-path cameras are judged against the median of this many neighbours either side,
+# in capture order: robust to a misplaced run of up to about this many frames.
+OFF_PATH_WINDOW = 5
 
 # A camera further than this from the point cloud's centre, in units of the cloud's
 # median spread, was placed outside the room. Good cameras sit within 2.4 across
@@ -57,17 +60,46 @@ def _trajectory_outlier_ratio(recon) -> float:
     still fits its own tracks, but which becomes permanent ghosting downstream.
     Frames are named in capture order, so adjacency is free.
     """
-    images = sorted(
-        (im for im in recon.images.values() if im.has_pose), key=lambda im: im.name,
-    )
+    images = _posed_in_capture_order(recon)
     if len(images) < 3:
         return 0.0
-    centers = [im.cam_from_world().inverse().translation for im in images]
+    centers = [im.projection_center() for im in images]
     steps = [float(np.linalg.norm(b - a)) for a, b in zip(centers, centers[1:])]
     median = float(np.median(steps))
     if median <= 0.0:
         return 1.0
     return sum(s > TRAJECTORY_JUMP_FACTOR * median for s in steps) / len(steps)
+
+
+def _posed_in_capture_order(recon) -> list:
+    return sorted((im for im in recon.images.values() if im.has_pose), key=lambda im: im.name)
+
+
+def drop_off_path_cameras(recon) -> list[str]:
+    """Deregister cameras flung off the walking path; return their names.
+
+    Each camera is compared with the median position of its neighbours in capture
+    order. One more than TRAJECTORY_JUMP_FACTOR typical steps away was misplaced.
+    Library Study Room Full (High) lost its whole global solution to the trajectory
+    gate (6.7% of steps jumped, limit 5%) and fell back to an incremental solve that
+    placed 367/545 frames, against 499 when the same footage passed the gate.
+    """
+    images = _posed_in_capture_order(recon)
+    if len(images) < 2 * OFF_PATH_WINDOW + 1:
+        return []
+    centers = np.array([im.projection_center() for im in images])
+    median_step = float(np.median(np.linalg.norm(np.diff(centers, axis=0), axis=1)))
+    if median_step <= 0.0:
+        return []
+    off = []
+    for i, im in enumerate(images):
+        lo, hi = max(0, i - OFF_PATH_WINDOW), min(len(images), i + OFF_PATH_WINDOW + 1)
+        neighbours = np.delete(centers[lo:hi], i - lo, axis=0)
+        if np.linalg.norm(centers[i] - np.median(neighbours, axis=0)) > TRAJECTORY_JUMP_FACTOR * median_step:
+            off.append(im)
+    for frame_id in {im.frame_id for im in off}:
+        recon.deregister_frame(frame_id)
+    return sorted(im.name for im in off)
 
 
 def drop_stray_cameras(recon) -> list[str]:
@@ -167,8 +199,10 @@ def _calibrate_focal_prior(job, db_path: Path) -> None:
         db.close()
 
 
-def _global_mapping(job, colmap_dir: Path, db_path: Path, frames_dir: Path, n_frames: int):
+def _global_mapping(job, colmap_dir: Path, db_path: Path, frames_dir: Path, n_frames: int,
+                    dropped: list | None = None):
     """Run GLOMAP; return the reconstruction if it clears the gate, else None.
+    Names of off-path cameras dropped from an accepted solve are added to `dropped`.
 
     Runs against a *copy* of the feature database: view-graph calibration rewrites
     two-view geometries, and the fallback has to see the same database production
@@ -201,11 +235,18 @@ def _global_mapping(job, colmap_dir: Path, db_path: Path, frames_dir: Path, n_fr
         return None
 
     best = max(reconstructions.values(), key=lambda r: r.num_reg_images())
+    # Drop the odd misplaced camera before judging the solve, rather than throwing
+    # the whole thing away for it; a solve that is wrong throughout still fails.
+    off_path = drop_off_path_cameras(best)
+    if off_path:
+        report.note(job, "poses", global_off_path_dropped=len(off_path))
     reason = _gate(best, n_frames)
     if reason is not None:
         report.note(job, "poses", global_mapping_rejected=reason)
         job.update(message=f"global mapping rejected ({reason}), using incremental mapper")
         return None
+    if dropped is not None:
+        dropped.extend(off_path)
     return best
 
 
@@ -272,8 +313,9 @@ def run(job, work: Path, preset):
     # recover from, so the global solution has to earn its way past _gate().
     mode = _mapper_mode()
     best = None
+    off_path: list[str] = []
     if mode in ("auto", "glomap"):
-        best = _global_mapping(job, colmap_dir, db_path, frames_dir, n_frames)
+        best = _global_mapping(job, colmap_dir, db_path, frames_dir, n_frames, dropped=off_path)
         job.check_cancelled()
         if best is None and mode == "glomap":
             raise RuntimeError(
@@ -283,6 +325,8 @@ def run(job, work: Path, preset):
     mapper = "global (GLOMAP)" if best is not None else "incremental"
     if best is None:
         best = _incremental_mapping(job, colmap_dir, db_path, frames_dir)
+        if best is not None:
+            off_path = drop_off_path_cameras(best)
 
     if best is None:
         raise RuntimeError(
@@ -304,9 +348,9 @@ def run(job, work: Path, preset):
                     **{k: round(v, 3) if isinstance(v, float) else v for k, v in metrics.items()})
     except Exception:
         pass
-    stray = drop_stray_cameras(best)
+    stray = sorted(off_path + drop_stray_cameras(best))
     registered = best.num_reg_images()
-    dropped = f", dropped {len(stray)} placed outside the room" if stray else ""
+    dropped = f", dropped {len(stray)} misplaced" if stray else ""
 
     model_dir = colmap_dir / "sparse" / "0"
     model_dir.mkdir(parents=True, exist_ok=True)

@@ -717,6 +717,12 @@ function connectEvents(id) {
 
 function startJob() {
   if (!selectedFile) return;
+  // Refuse before uploading: the server would only say no after the whole video arrived.
+  const limit = presetInfo?.[els.presetSelect.value]?.max_video_s;
+  if (limit != null && selectedDuration > limit) {
+    els.startMsg.textContent = "This video is too long for the chosen preset; see above.";
+    return;
+  }
   els.startBtn.disabled = true;
   els.startMsg.textContent = "";
   const form = new FormData();

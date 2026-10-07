@@ -34,7 +34,7 @@ Every event is `event: state` with a full JSON job snapshot:
   "frames": {"count": 409, "spacing_s": 0.8, "sample": ["/api/jobs/abc123/files/frames/00001.jpg"]},
   "sparse_url": "/api/jobs/abc123/files/sparse.ply",
   "cameras": [{"position": [x,y,z], "rotation": [qw,qx,qy,qz]}],
-  "stray_cameras": ["00123.jpg"],
+  "stray_cameras": ["00123.jpg"],  // dropped as misplaced: off the walking path or outside the room
   "checkpoint": {"url": ".../checkpoints/splat_10000.ply", "step": 10000, "total_steps": 30000},
   "artifacts": [{"name": "scene.ply", "url": "...", "bytes": 123, "gaussians": 135575, "fill_ratio": 46.7}],
   "error": null,
