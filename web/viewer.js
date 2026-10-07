@@ -282,7 +282,14 @@ export function createViewer(canvas) {
     doLoadCheckpoint(url);
   }
 
+  // A big scene takes seconds to appear (~10 s for 1.3M splats); say so while
+  // nothing is on screen yet. Later checkpoints replace a visible one silently.
+  let onLoadingChange = null;
+  function setLoading(on) { if (onLoadingChange) onLoadingChange(on); }
+
   async function doLoadCheckpoint(url) {
+    const first = !splat;
+    if (first) setLoading(true);
     try {
       const loaded = new SplatMesh({ url, lod: LOD });
       await loaded.initialized;
@@ -294,6 +301,7 @@ export function createViewer(canvas) {
     } catch (e) {
       console.error("checkpoint load failed:", e);
     } finally {
+      if (first) setLoading(false);
       loading = false;
       if (nextUrl) { const u = nextUrl; nextUrl = null; loadCheckpoint(u); }
     }
@@ -408,6 +416,72 @@ export function createViewer(canvas) {
     rig.invalidate();
   }
 
+  // Level the anchor to the floor the user clicked. Three picked points alone
+  // make a poor plane: near the camera the floor's splats are large and soft,
+  // picks land centimetres off, and a small triangle then tilts by tens of
+  // degrees (26° on the library room). So the picks only say *where* the floor
+  // is: the plane is fitted to the sparse cloud's points around them, near
+  // their height, with outliers trimmed. If too few points are there, or the
+  // fit disagrees with the room's own level by over 15°, the room's level wins.
+  // The anchor moves onto the plane under the picks' centre and keeps its
+  // heading. Returns {ok, method, points, tiltDeg}.
+  function setAnchorFromPlane(picks) {
+    const c = new THREE.Vector3();
+    picks.forEach((p) => c.add(p));
+    c.divideScalar(picks.length);
+    let span = 0;
+    for (const a of picks) for (const b of picks) span = Math.max(span, a.distanceTo(b));
+    const reach = Math.max(span, rig.radius * 0.15);
+    const band = Math.min(reach * 0.25, rig.radius * 0.03);
+
+    const xs = [], ys = [], zs = [];
+    if (lastPositions) {
+      const v = new THREE.Vector3();
+      for (let i = 0; i < lastPositions.length; i += 3) {
+        v.set(lastPositions[i], lastPositions[i + 1], lastPositions[i + 2]).applyMatrix4(world.matrixWorld);
+        if (Math.abs(v.y - c.y) < band && Math.hypot(v.x - c.x, v.z - c.z) < reach) { xs.push(v.x); ys.push(v.y); zs.push(v.z); }
+      }
+    }
+    // y = a·x + b·z + d by least squares, trimming points far off the plane.
+    let fit = null, keep = xs.map(() => true);
+    for (let round = 0; round < 4 && keep.filter(Boolean).length >= 20; round++) {
+      const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], r = [0, 0, 0];
+      xs.forEach((x, i) => {
+        if (!keep[i]) return;
+        const row = [x, zs[i], 1];
+        for (let j = 0; j < 3; j++) { r[j] += row[j] * ys[i]; for (let k = 0; k < 3; k++) S[j][k] += row[j] * row[k]; }
+      });
+      fit = solve3(S, r);
+      if (!fit) break;
+      const res = xs.map((x, i) => Math.abs(fit[0] * x + fit[1] * zs[i] + fit[2] - ys[i]));
+      const kept = res.filter((_, i) => keep[i]).sort((p, q) => p - q);
+      const limit = 2.5 * kept[kept.length >> 1] + 1e-9;
+      keep = res.map((d) => d <= limit);
+    }
+    let n = fit ? new THREE.Vector3(-fit[0], 1, -fit[1]).normalize() : null;
+    const tiltDeg = n ? THREE.MathUtils.radToDeg(n.angleTo(new THREE.Vector3(0, 1, 0))) : null;
+    const method = n && tiltDeg <= 15 ? "fit" : "level";
+    if (method === "level") n = new THREE.Vector3(0, 1, 0);
+    const height = method === "fit" ? fit[0] * c.x + fit[1] * c.z + fit[2] : c.y;
+
+    const z = new THREE.Vector3(0, 0, 1).applyQuaternion(anchor.quaternion);
+    z.addScaledVector(n, -z.dot(n));
+    if (z.lengthSq() < 1e-8) z.set(1, 0, 0).addScaledVector(n, -n.x); // heading was along the normal
+    z.normalize();
+    const x = new THREE.Vector3().crossVectors(n, z);
+    anchor.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, n, z));
+    placeAnchor(new THREE.Vector3(c.x, height, c.z));
+    return { ok: true, method, points: keep.filter(Boolean).length, tiltDeg };
+  }
+
+  function solve3(M, b) {
+    const det = (A) => A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+      - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+    const d = det(M);
+    if (Math.abs(d) < 1e-12) return null;
+    return [0, 1, 2].map((col) => det(M.map((row, i) => row.map((v, k) => (k === col ? b[i] : v)))) / d);
+  }
+
   // --- picking points ----------------------------------------------------------
   // Click `count` points on whatever is showing; onDone gets them in scene
   // coordinates. A click is a press and release that barely moved, so orbit
@@ -498,8 +572,9 @@ export function createViewer(canvas) {
 
   return {
     loadSparse, setCameras, setFrustaVisible, loadCheckpoint, loadMesh, setLayer, reset, resetView,
-    setTransform, getTransform, setGrid, setGizmo, startMeasure, clearMeasure, focus, placeAnchor,
+    setTransform, getTransform, setGrid, setGizmo, startMeasure, clearMeasure, focus, placeAnchor, setAnchorFromPlane,
     set onTransformChange(fn) { onTransformChange = fn; },
+    set onLoadingChange(fn) { onLoadingChange = fn; },
     get meshTriangles() { return mesh ? mesh.userData.triangles : null; },
   };
 }
