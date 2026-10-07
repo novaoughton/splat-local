@@ -5,7 +5,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from . import failures, presets
+from . import failures, presets, report
 
 JOBS_DIR = Path(os.environ.get("SPLAT_JOBS_DIR", "jobs"))
 
@@ -30,6 +30,7 @@ class Job:
         self.outputs = outputs
         self.cancelled = False
         self.proc: subprocess.Popen | None = None
+        self.recorder: "report.Recorder | None" = None  # set while the pipeline runs
         self._lock = threading.Lock()
         self.version = 0
         self.state = {
@@ -179,9 +180,47 @@ def _run_sync(job: Job):
         "train": train_brush.run,
         "export": export_stage.run,
     }
+    job.recorder = report.Recorder(job)
+    try:
+        job.recorder.start()
+    except Exception:
+        pass  # the report is a by-product; it must never stop the job
+    terminal = {"stage": "error", "error": "the pipeline stopped unexpectedly", "message": "error"}
+    try:
+        terminal = _run_stages(job, runners)
+    finally:
+        # The report goes out with the final state: a browser stops listening
+        # once it sees a terminal stage, so anything published after would be missed.
+        terminal["artifacts"] = _write_report(job, terminal)
+        job.update(**terminal)
+
+
+def _write_report(job: Job, terminal: dict) -> list | None:
+    """Write the debug report; return the artifact list with it added."""
+    recorder, job.recorder = job.recorder, None
+    artifacts = job.snapshot()[0].get("artifacts")
+    try:
+        recorder.finish(terminal)
+        path = recorder.write()
+    except Exception:
+        return artifacts
+    if path is None:
+        return artifacts
+    others = [a for a in (artifacts or []) if a.get("name") != report.REPORT_NAME]
+    return others + [{
+        "name": report.REPORT_NAME,
+        "url": job.file_url(f"exports/{report.REPORT_NAME}"),
+        "bytes": path.stat().st_size,
+    }]
+
+
+def _run_stages(job: Job, runners: dict) -> dict:
+    """Run every stage; return the terminal state fields (not yet applied)."""
     try:
         for name in stage_names(job.outputs):
             job.check_cancelled()
+            if job.recorder:
+                job.recorder.stage(name)
             job.update(stage=name, progress=0.0, message=f"starting {name}")
             if name == "mesh" and job.outputs == "both":
                 # The splat doesn't depend on the mesh: record a mesh failure and carry on.
@@ -194,16 +233,16 @@ def _run_sync(job: Job):
                 continue
             runners[name](job, job.work, job.preset)
         job.check_cancelled()
-        job.update(stage="done", progress=1.0, message="done")
+        return {"stage": "done", "progress": 1.0, "message": "done"}
     except JobCancelled:
-        job.update(stage="cancelled", message="cancelled")
+        return {"stage": "cancelled", "message": "cancelled"}
     except Exception as exc:
         # "stage" is about to become "error"; keep the one that failed.
         failed_stage = job.snapshot()[0]["stage"]
-        job.update(
-            stage="error", error=str(exc), message=str(exc),
-            failed_stage=failed_stage, failure=failures.explain(failed_stage, str(exc)),
-        )
+        return {
+            "stage": "error", "error": str(exc), "message": str(exc),
+            "failed_stage": failed_stage, "failure": failures.explain(failed_stage, str(exc)),
+        }
 
 
 async def start(job: Job):

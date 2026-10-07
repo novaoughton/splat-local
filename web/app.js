@@ -466,10 +466,11 @@ function mountError() {
     <div class="eyebrow" id="errorEyebrow">error</div>
     <h2 class="panel-title" id="errorTitle">Something went wrong</h2>
     <div class="failure" id="errorMsg"></div>
+    <a class="guide-link" id="reportLink" download hidden>Download the debug report →</a>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
-  els = { title: $("errorTitle"), msg: $("errorMsg"), eyebrow: $("errorEyebrow") };
+  els = { title: $("errorTitle"), msg: $("errorMsg"), eyebrow: $("errorEyebrow"), reportLink: $("reportLink") };
   wireProjectButtons();
 }
 
@@ -587,6 +588,10 @@ function updateError(state) {
     : (state.error || "").startsWith("interrupted") ? `interrupted during ${stage}`
     : `failed at ${stage}`;
   els.title.textContent = state.name || (cancelled ? "Job cancelled" : "Reconstruction failed");
+  // Timings, memory and settings up to the point it stopped.
+  const reportFile = (state.artifacts || []).find((a) => a.name === "debug-report.md");
+  els.reportLink.hidden = !reportFile;
+  if (reportFile) els.reportLink.href = reportFile.url;
 
   // Rebuilt only when the content changes, so an open "technical details" stays open.
   const raw = state.error || state.message || "";

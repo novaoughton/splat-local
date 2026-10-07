@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 
+from .. import report
 from .sfm_common import cameras_json, write_sparse_ply
 
 # Mapper selection. "auto" runs GLOMAP first and falls back to the incremental
@@ -202,6 +203,7 @@ def _global_mapping(job, colmap_dir: Path, db_path: Path, frames_dir: Path, n_fr
     best = max(reconstructions.values(), key=lambda r: r.num_reg_images())
     reason = _gate(best, n_frames)
     if reason is not None:
+        report.note(job, "poses", global_mapping_rejected=reason)
         job.update(message=f"global mapping rejected ({reason}), using incremental mapper")
         return None
     return best
@@ -278,6 +280,7 @@ def run(job, work: Path, preset):
                 f"global mapping did not produce a usable reconstruction and "
                 f"{MAPPER_ENV}=glomap disables the incremental fallback"
             )
+    mapper = "global (GLOMAP)" if best is not None else "incremental"
     if best is None:
         best = _incremental_mapping(job, colmap_dir, db_path, frames_dir)
 
@@ -295,6 +298,12 @@ def run(job, work: Path, preset):
         )
     job.check_cancelled()
 
+    try:
+        metrics = gate_metrics(best, n_frames)
+        report.note(job, "poses", mapper=mapper, mapper_mode=mode,
+                    **{k: round(v, 3) if isinstance(v, float) else v for k, v in metrics.items()})
+    except Exception:
+        pass
     stray = drop_stray_cameras(best)
     registered = best.num_reg_images()
     dropped = f", dropped {len(stray)} placed outside the room" if stray else ""

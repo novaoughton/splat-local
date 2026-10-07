@@ -83,6 +83,17 @@ The `mesh` stage runs `tools/objcap`, a small Swift CLI around Apple's Object Ca
 
 Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and the viewer keeps the last training checkpoint.
 
+## Debug report
+
+Every job writes `exports/debug-report.md` when it ends — finished, failed or cancelled — and lists it last in `artifacts` (the failure panel links to it too). It holds:
+
+- **Stages:** start, end and duration of each, with peak memory (the app plus every tool it launched, measured with `footprint` so GPU memory counts, as in Activity Monitor), mean and peak CPU (share of the whole machine), and peak swap and its growth.
+- **Warnings:** memory over 75% of RAM, swap growth over 2 GB, gaps in sampling over 60 s (the Mac was asleep), battery power, under 80% of frames placed, cameras dropped as misplaced, the splat cap reached, and large swings in frame brightness (exposure not locked).
+- **Input video** (ffprobe: duration, size, fps, codec, HDR), **frames** (selection settings; frame size, total megapixels, mean colour, luminance percentiles, saturation, clipped and crushed pixels, brightness spread across frames), **poses** (mapper, why the global one was rejected if it was, registered ratio, points, reprojection error, track length, observations per image, focal ratio, trajectory jumps), **train** (images, the Brush command, and each checkpoint's step, time and splat count), **results** (frames, cameras, mesh, artifacts), **settings** (the preset as run), **tool versions** and **machine** (chip, cores, RAM, macOS, power at start and end).
+- **Raw data:** all of the above as JSON, plus a resource sample every 5 s.
+
+Stages add details through `report.note(job, section, **values)` (`server/report.py`); nothing in the report can stop a job.
+
 ## Job directory layout
 
 `jobs/{id}/`: `project.json`, `input.<ext>`, `frames/*.jpg`, `colmap/` (db + sparse), `dataset/` (undistorted images + sparse for Brush), `sparse.ply`, `checkpoints/*.ply` (Brush's `export_*.ply` originals, kept; plus at most two transient `preview_*.ply` stream copies while training runs), `mesh_input/` (links to the frames Object Capture reads), `mesh_raw/` (its unaligned output + `poses.json`), `exports/*` (including `exports/mesh/` and `exports/mesh.zip`)
