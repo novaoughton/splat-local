@@ -9,14 +9,19 @@
 import * as THREE from "three";
 import { SplatMesh } from "@sparkjsdev/spark";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { createRig, LOD, percentile } from "splat-viewer/core.js";
 import { parsePLYAsync } from "splat-viewer/ply.js";
 import { estimateUp } from "./level.js";
 import { pickOpeningCamera } from "./opening-view.js";
+import { createGrid } from "./grid.js";
 
 // The rig's default: COLMAP is +Y down, so the world group is turned 180° about X.
 const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+const DEG = THREE.MathUtils.DEG2RAD;
+// Unity's Euler order: Z, then X, then Y.
+const EULER_ORDER = "YXZ";
 
 export function createViewer(canvas) {
   const rig = createRig(canvas);
@@ -30,6 +35,26 @@ export function createViewer(canvas) {
   let home = null; // the framing frame() chose, for resetView()
   let lastPositions = null; // the sparse cloud, to reframe once the scene is levelled
   let lastCameras = null; // capture cameras, for the opening view inside the room
+  let levelUp = null; // the up direction levelWorld() used, saved with transforms
+  let baseRadius = null; // half the sparse cloud's extent, in reconstruction units
+
+  // The user's transforms, saved with the project (baking them into downloads
+  // is M3). `assets` places the splat and mesh together; `anchor` places the
+  // grid, which is the frame exports will be re-expressed in: its Y up, its Z
+  // forward. Both sit in the levelled frame the user sees:
+  //   scene → assets → world (flip + levelling) → splat / mesh / cloud / frusta
+  //   scene → anchor → grid
+  const assets = new THREE.Group();
+  rig.scene.remove(world);
+  assets.add(world);
+  rig.scene.add(assets);
+  const anchor = new THREE.Group();
+  const grid = createGrid();
+  anchor.add(grid.object);
+  anchor.visible = false;
+  rig.scene.add(anchor);
+  assets.rotation.order = anchor.rotation.order = EULER_ORDER;
+  let gridCell = 1;
 
   // Stand the reconstruction upright: turn the world so the up direction the
   // cameras imply (see level.js) becomes the viewer's vertical. Navigation —
@@ -41,8 +66,9 @@ export function createViewer(canvas) {
       const u = new THREE.Vector3(...up).applyQuaternion(FLIP).normalize();
       q.premultiply(new THREE.Quaternion().setFromUnitVectors(u, new THREE.Vector3(0, 1, 0)));
     }
+    levelUp = up ? [...up] : null;
     world.quaternion.copy(q);
-    world.updateMatrixWorld(true);
+    assets.updateMatrixWorld(true);
     rig.invalidate();
   }
 
@@ -142,7 +168,8 @@ export function createViewer(canvas) {
       (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2,
     ).applyMatrix4(world.matrixWorld);
     const size = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.05);
-    rig.radius = size / 2;
+    baseRadius = size / 2;
+    rig.radius = baseRadius * assets.scale.x;
     camera.near = Math.max(rig.radius * 0.01, 0.001);
     camera.far = rig.radius * 60;
     camera.updateProjectionMatrix();
@@ -168,6 +195,7 @@ export function createViewer(canvas) {
     }
     controls.update();
     home = { position: camera.position.clone(), target: controls.target.clone(), radius: rig.radius };
+    rebuildGrid();
     rig.invalidate();
   }
 
@@ -214,7 +242,7 @@ export function createViewer(canvas) {
     levelWorld(estimateUp(cameras));
     frame(); // reframe in the levelled scene, from inside it
     if (!lastCameras) return;
-    const d = Math.max(rig.radius * 0.06, 0.05), hw = d * 0.5, hh = d * 0.375;
+    const d = Math.max((baseRadius ?? rig.radius) * 0.06, 0.05), hw = d * 0.5, hh = d * 0.375;
     const corners = [[-hw, -hh, -d], [hw, -hh, -d], [hw, hh, -d], [-hw, hh, -d]];
     const q = new THREE.Quaternion(), p = new THREE.Vector3(), v = new THREE.Vector3();
     const pos = [];
@@ -271,7 +299,187 @@ export function createViewer(canvas) {
     }
   }
 
+  // --- transforms ------------------------------------------------------------
+  const round = (v) => Math.round(v * 1e6) / 1e6;
+
+  function applyPose(obj, { position = [0, 0, 0], rotation_deg = [0, 0, 0], scale } = {}) {
+    obj.position.set(...position);
+    obj.rotation.set(rotation_deg[0] * DEG, rotation_deg[1] * DEG, rotation_deg[2] * DEG, EULER_ORDER);
+    if (scale !== undefined) obj.scale.setScalar(scale);
+    obj.updateMatrixWorld(true);
+  }
+
+  function poseOf(obj, withScale) {
+    const pose = {
+      position: obj.position.toArray().map(round),
+      rotation_deg: [obj.rotation.x, obj.rotation.y, obj.rotation.z].map((r) => round(r / DEG)),
+    };
+    if (withScale) pose.scale = round(obj.scale.x);
+    return pose;
+  }
+
+  // Navigation speed, clipping and the grid's reach follow the asset scale.
+  function assetsChanged() {
+    assets.updateMatrixWorld(true);
+    if (baseRadius) {
+      rig.radius = baseRadius * assets.scale.x;
+      camera.near = Math.max(rig.radius * 0.01, 0.001);
+      camera.far = rig.radius * 60;
+      camera.updateProjectionMatrix();
+    }
+    rebuildGrid();
+    rig.invalidate();
+  }
+
+  // null resets both to identity.
+  function setTransform(t) {
+    applyPose(assets, { scale: 1, ...(t?.assets || {}) });
+    applyPose(anchor, t?.anchor || {});
+    assetsChanged();
+  }
+
+  function getTransform() {
+    return { assets: poseOf(assets, true), anchor: poseOf(anchor, false), level_up: levelUp };
+  }
+
+  function rebuildGrid() {
+    if (!anchor.visible) return;
+    // Far enough to cover the room from wherever the anchor sits.
+    const centre = new THREE.Vector3().setFromMatrixPosition(assets.matrixWorld);
+    const reach = (baseRadius ?? 3) * assets.scale.x * 3 + centre.distanceTo(anchor.position);
+    grid.build(gridCell, reach);
+  }
+
+  function setGrid({ visible, cell }) {
+    if (cell) gridCell = cell;
+    anchor.visible = visible;
+    rebuildGrid();
+    rig.invalidate();
+  }
+
+  // Unity-style drag handles on the assets or the anchor. Scale stays uniform:
+  // splats can't take a non-uniform one.
+  const gizmo = new TransformControls(camera, canvas);
+  gizmo.setSize(0.8);
+  rig.scene.add(gizmo.getHelper());
+  let onTransformChange = null;
+  let scaleBefore = 1;
+  gizmo.addEventListener("change", () => rig.invalidate());
+  gizmo.addEventListener("dragging-changed", (e) => { controls.enabled = !e.value; });
+  gizmo.addEventListener("mouseDown", () => { scaleBefore = assets.scale.x; });
+  gizmo.addEventListener("objectChange", () => {
+    if (gizmo.object === assets) {
+      const s = assets.scale;
+      const dragged = [s.x, s.y, s.z].reduce((a, b) => (Math.abs(b - scaleBefore) > Math.abs(a - scaleBefore) ? b : a));
+      s.setScalar(Math.max(dragged, 1e-6));
+      assetsChanged();
+    } else {
+      rebuildGrid();
+    }
+    if (onTransformChange) onTransformChange(getTransform());
+  });
+
+  // target: "assets" | "anchor" | null; mode: "translate" | "rotate" | "scale".
+  function setGizmo(target, mode = "translate") {
+    if (!target) gizmo.detach();
+    else {
+      gizmo.attach(target === "anchor" ? anchor : assets);
+      gizmo.setMode(target === "anchor" && mode === "scale" ? "translate" : mode);
+    }
+    rig.invalidate();
+  }
+
+  // Point the camera at the assets' or the anchor's origin, where the gizmo is;
+  // either can be well away from the part of the room in view.
+  function focus(target) {
+    const at = new THREE.Vector3().setFromMatrixPosition((target === "anchor" ? anchor : assets).matrixWorld);
+    const back = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+    controls.target.copy(at);
+    camera.position.copy(at).addScaledVector(back, rig.radius * 0.4);
+    controls.update();
+    rig.invalidate();
+  }
+
+  // Put the anchor (and the grid) on a point picked in the scene, e.g. the floor.
+  function placeAnchor(point) {
+    anchor.position.copy(point);
+    anchor.updateMatrixWorld(true);
+    rebuildGrid();
+    rig.invalidate();
+  }
+
+  // --- picking points ----------------------------------------------------------
+  // Click `count` points on whatever is showing; onDone gets them in scene
+  // coordinates. A click is a press and release that barely moved, so orbit
+  // drags still work meanwhile.
+  const raycaster = new THREE.Raycaster();
+  const measureGroup = new THREE.Group();
+  measureGroup.renderOrder = 20;
+  rig.scene.add(measureGroup);
+  let measure = null; // { points, count, onPoint, onDone }
+  let pressedAt = null;
+
+  function pickPoint(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    raycaster.setFromCamera(new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    ), camera);
+    raycaster.params.Points.threshold = rig.radius * 0.01;
+    const targets = [mesh && mesh.visible && mesh, splat && splat.visible && splat, pointCloud].filter(Boolean);
+    for (const target of targets) {
+      try {
+        const hit = raycaster.intersectObject(target, true)[0];
+        if (hit) return hit.point.clone();
+      } catch (e) {
+        console.warn("measure: picking failed on", target.type, e);
+      }
+    }
+    return null;
+  }
+
+  function drawMeasure() {
+    measureGroup.children.slice().forEach((o) => { measureGroup.remove(o); o.geometry.dispose(); o.material.dispose(); });
+    if (!measure || !measure.points.length) { rig.invalidate(); return; }
+    const pos = measure.points.flatMap((p) => p.toArray());
+    const geo = () => new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    const style = { color: 0xe3a53d, depthTest: false, transparent: true };
+    measureGroup.add(new THREE.Points(geo(), new THREE.PointsMaterial({ ...style, size: 9, sizeAttenuation: false })));
+    if (measure.points.length === 2) measureGroup.add(new THREE.Line(geo(), new THREE.LineBasicMaterial(style)));
+    measureGroup.children.forEach((o) => { o.renderOrder = 20; });
+    rig.invalidate();
+  }
+
+  canvas.addEventListener("pointerdown", (e) => { pressedAt = measure ? [e.clientX, e.clientY] : null; });
+  canvas.addEventListener("pointerup", (e) => {
+    if (!measure || !pressedAt || measure.points.length >= measure.count) return;
+    const moved = Math.hypot(e.clientX - pressedAt[0], e.clientY - pressedAt[1]);
+    pressedAt = null;
+    if (moved > 4) return;
+    const p = pickPoint(e.clientX, e.clientY);
+    if (measure.onPoint) measure.onPoint(measure.points.length, !!p);
+    if (!p) return;
+    measure.points.push(p);
+    drawMeasure();
+    if (measure.points.length === measure.count) measure.onDone(measure.points.map((v) => v.clone()));
+  });
+
+  function startMeasure({ count = 2, onPoint, onDone }) {
+    measure = { points: [], count, onPoint, onDone };
+    drawMeasure();
+  }
+
+  function clearMeasure() {
+    measure = null;
+    drawMeasure();
+  }
+
   function reset() {
+    clearMeasure();
+    setGizmo(null);
+    anchor.visible = false;
+    baseRadius = null;
+    setTransform(null);
     pointCloud = discard(pointCloud);
     frusta = discard(frusta);
     splat = discard(splat);
@@ -290,6 +498,8 @@ export function createViewer(canvas) {
 
   return {
     loadSparse, setCameras, setFrustaVisible, loadCheckpoint, loadMesh, setLayer, reset, resetView,
+    setTransform, getTransform, setGrid, setGizmo, startMeasure, clearMeasure, focus, placeAnchor,
+    set onTransformChange(fn) { onTransformChange = fn; },
     get meshTriangles() { return mesh ? mesh.userData.triangles : null; },
   };
 }

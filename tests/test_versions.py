@@ -68,7 +68,7 @@ class VersionTests(unittest.TestCase):
             data = json.loads((job.work / projects.PROJECT_FILE).read_text())
         self.assertEqual(data["state"]["versions"], {"brush": "brush-cli 1.0.0"})
         self.assertEqual(data["preset_settings"]["total_steps"], 10_000)
-        self.assertEqual(data["preset_settings"]["frames"], 100)
+        self.assertEqual(data["preset_settings"]["frame_spacing_s"], 1.0)
 
 
 if __name__ == "__main__":

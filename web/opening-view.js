@@ -18,6 +18,17 @@ function forwardOf([w, x, y, z]) {
   return [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)];
 }
 
+// A camera further than this from the cloud's centre, in units of the cloud's
+// median spread, was misplaced by the solver: it sees the whole room in its cone
+// and so would always win, but from outside it. Matches STRAY_CAMERA_SPREADS in
+// server/stages/poses_colmap.py, which drops these from new runs.
+const STRAY_SPREADS = 3.5;
+
+const median = (values) => {
+  const sorted = Float64Array.from(values).sort();
+  return sorted.length ? sorted[sorted.length >> 1] : 0;
+};
+
 // minDepth: ignore points closer than this (a wall right in front of the lens
 // shouldn't win). Returns {position, forward} or null.
 export function pickOpeningCamera(cameras, positions, minDepth) {
@@ -26,8 +37,16 @@ export function pickOpeningCamera(cameras, positions, minDepth) {
   const stride = Math.max(1, Math.floor(n / MAX_SAMPLES));
   const cosLimit = Math.cos(HALF_ANGLE);
 
+  const sample = [];
+  for (let i = 0; i < n; i += stride) sample.push(i);
+  const centre = [0, 1, 2].map((a) => median(sample.map((i) => positions[i * 3 + a])));
+  const spread = median(sample.map((i) => Math.hypot(
+    positions[i * 3] - centre[0], positions[i * 3 + 1] - centre[1], positions[i * 3 + 2] - centre[2])));
+  const inRoom = cameras.filter((cam) => !(spread > 0) ||
+    Math.hypot(cam.position[0] - centre[0], cam.position[1] - centre[1], cam.position[2] - centre[2]) <= STRAY_SPREADS * spread);
+
   let best = null, bestScore = -1;
-  for (const cam of cameras) {
+  for (const cam of inRoom.length ? inRoom : cameras) {
     const [cx, cy, cz] = cam.position;
     const [fx, fy, fz] = forwardOf(cam.rotation);
     let score = 0;

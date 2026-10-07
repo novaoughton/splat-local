@@ -2,12 +2,13 @@
 
 ## Endpoints
 
-- `GET /api/presets` — each preset's settings (`frames`, `max_resolution`, `total_steps`, ...). The start screen uses `frames` with the chosen video's length to warn when frames would be more than 1.5 s apart.
+- `GET /api/presets` — each preset's settings (`frame_spacing_s`, `min_frames`, `max_video_s`, `max_resolution`, `total_steps`, ...). A preset takes the sharpest frame in every `frame_spacing_s` of video (Preview 1.0 s, High 0.8 s, Max 0.7 s), and at least `min_frames`, so longer videos get more frames. The start screen uses these with the chosen video's length to show the frame count, and stops a video longer than `max_video_s` (`null` means no limit).
 - `GET /api/jobs` — saved projects, newest first: `[{"id", "name", "created", "stage", "error", "failed_stage", "preset", "outputs", "gaussians", "triangles", "thumbnail", "bytes"}]`, where `bytes` is the folder's size on disk. Includes projects from earlier runs of the app (see [Saved projects](#saved-projects)).
 - `DELETE /api/jobs/{id}` — delete the project and its whole folder, downloads included. 409 if the job is still running (cancel it first).
 - `GET /api/jobs/{id}/disk` — `{"bytes", "reclaimable"}`: the folder's size, and what clean-up would free (0 unless the project finished).
 - `POST /api/jobs/{id}/clean` — remove a finished project's working files: `checkpoints/`, `colmap/`, `colmap_da3/`, `dataset/`, `mesh_input/`, `mesh_raw/` and every frame not used as a thumbnail. The exports, source video, `sparse.ply` and `project.json` stay, so the project opens and views as before; it just can't be retrained without starting again from the video. Returns `{"freed", "bytes"}` and sets `state.cleaned`. 409 unless the project finished.
-- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension), `outputs` (`splat|mesh|both`, default `splat`; see [Mesh output](#mesh-output)). Returns `{"job_id": str}`. 409 if a job is already running.
+- `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension), `outputs` (`splat|mesh|both`, default `splat`; see [Mesh output](#mesh-output)). Returns `{"job_id": str}`. 409 if a job is already running; 400 if the video is longer than the preset's `max_video_s`.
+- `PUT /api/jobs/{id}/transform` — JSON body `{"assets": {"position": [x,y,z], "rotation_deg": [x,y,z], "scale": s}, "anchor": {"position": [x,y,z], "rotation_deg": [x,y,z]}, "scaled": bool, "level_up": [x,y,z] | null}`. Saves the viewer's transforms as `state.transform` and returns `{"transform": ...}`. `assets` moves the splat and mesh together; `anchor` places the grid, the frame exports will be re-expressed in (Y up, Z forward). Both are in the viewer's levelled frame, which `level_up` (the reconstruction's estimated up direction) reproduces; rotations are degrees, applied Z, then X, then Y as in Unity. `scaled` means the asset scale was set by measuring, so units are metres. Not yet baked into downloads (M3). 400 if malformed, 409 while the job runs.
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
 - `GET /api/jobs/{id}/events` — SSE stream. On connect, emits current state, then updates.
@@ -30,9 +31,10 @@ Every event is `event: state` with a full JSON job snapshot:
   "progress": 0.42,
   "message": "human-readable status line",
   "input_url": "/api/jobs/abc123/files/input.mp4",
-  "frames": {"count": 200, "sample": ["/api/jobs/abc123/files/frames/00001.jpg"]},
+  "frames": {"count": 409, "spacing_s": 0.8, "sample": ["/api/jobs/abc123/files/frames/00001.jpg"]},
   "sparse_url": "/api/jobs/abc123/files/sparse.ply",
   "cameras": [{"position": [x,y,z], "rotation": [qw,qx,qy,qz]}],
+  "stray_cameras": ["00123.jpg"],  // dropped as misplaced: off the walking path or outside the room
   "checkpoint": {"url": ".../checkpoints/splat_10000.ply", "step": 10000, "total_steps": 30000},
   "artifacts": [{"name": "scene.ply", "url": "...", "bytes": 123, "gaussians": 135575, "fill_ratio": 46.7}],
   "error": null,
@@ -81,6 +83,17 @@ The `mesh` stage runs `tools/objcap`, a small Swift CLI around Apple's Object Ca
 
 Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and the viewer keeps the last training checkpoint.
 
+## Debug report
+
+Every job writes `exports/debug-report.md` when it ends — finished, failed or cancelled — and lists it last in `artifacts` (the failure panel links to it too). It holds:
+
+- **Stages:** start, end and duration of each, with peak memory (the app plus every tool it launched, measured with `footprint` so GPU memory counts, as in Activity Monitor), mean and peak CPU (share of the whole machine), and peak swap and its growth.
+- **Warnings:** memory over 75% of RAM, swap growth over 2 GB, gaps in sampling over 60 s (the Mac was asleep), battery power, under 80% of frames placed, cameras dropped as misplaced, the splat cap reached, and large swings in frame brightness (exposure not locked).
+- **Input video** (ffprobe: duration, size, fps, codec, HDR), **frames** (selection settings; frame size, total megapixels, mean colour, luminance percentiles, saturation, clipped and crushed pixels, brightness spread across frames), **poses** (mapper, why the global one was rejected if it was, registered ratio, points, reprojection error, track length, observations per image, focal ratio, trajectory jumps), **train** (images, the Brush command, and each checkpoint's step, time and splat count), **results** (frames, cameras, mesh, artifacts), **settings** (the preset as run), **tool versions** and **machine** (chip, cores, RAM, macOS, power at start and end).
+- **Raw data:** all of the above as JSON, plus a resource sample every 5 s.
+
+Stages add details through `report.note(job, section, **values)` (`server/report.py`); nothing in the report can stop a job.
+
 ## Job directory layout
 
 `jobs/{id}/`: `project.json`, `input.<ext>`, `frames/*.jpg`, `colmap/` (db + sparse), `dataset/` (undistorted images + sparse for Brush), `sparse.ply`, `checkpoints/*.ply` (Brush's `export_*.ply` originals, kept; plus at most two transient `preview_*.ply` stream copies while training runs), `mesh_input/` (links to the frames Object Capture reads), `mesh_raw/` (its unaligned output + `poses.json`), `exports/*` (including `exports/mesh/` and `exports/mesh.zip`)
@@ -90,7 +103,7 @@ Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and t
 Each job folder carries a `project.json`, written when the job starts and again when it ends:
 
 ```json
-{"schema": 1, "id": "abc123", "preset": "high", "preset_settings": {"frames": 200, "total_steps": 18000, "...": "..."},
+{"schema": 1, "id": "abc123", "preset": "high", "preset_settings": {"frame_spacing_s": 0.8, "total_steps": 18000, "...": "..."},
  "pose_backend": "colmap", "saved": 1790972396.1, "state": { ...the job snapshot above... }}
 ```
 

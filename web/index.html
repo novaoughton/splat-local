@@ -10,6 +10,7 @@
   "imports": {
     "three": "/vendor/three/three.module.min.js",
     "three/addons/controls/OrbitControls.js": "/vendor/three/OrbitControls.js",
+    "three/addons/controls/TransformControls.js": "/vendor/three/TransformControls.js",
     "three/addons/postprocessing/Pass.js": "/vendor/three/Pass.js",
     "three/addons/loaders/OBJLoader.js": "/vendor/three/OBJLoader.js",
     "three/addons/loaders/MTLLoader.js": "/vendor/three/MTLLoader.js",
@@ -165,6 +166,84 @@
     border: 1px solid var(--border);
     border-radius: 3px;
   }
+
+  /* grid and transform controls, under the toggles above */
+  .view-stack {
+    position: absolute;
+    top: 122px;
+    right: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+  }
+  .view-stack .view-btn { position: static; }
+  .view-stack .view-btn.on { color: #14100a; background: var(--accent); border-color: var(--accent); }
+  .grid-ctl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(10,11,12,.55);
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .grid-ctl label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .grid-ctl input[type="range"] { width: 110px; accent-color: var(--accent); }
+  .grid-ctl .value { min-width: 64px; text-align: right; color: var(--text); }
+  .transform-panel {
+    width: 264px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(21,23,27,.92);
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .tp-seg { display: flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+  .tp-seg button {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    background: none;
+    border: none;
+    padding: 5px 0;
+    cursor: pointer;
+  }
+  .tp-seg button + button { border-left: 1px solid var(--border); }
+  .tp-seg button.on { color: #14100a; background: var(--accent); }
+  .tp-seg button:disabled { opacity: .35; cursor: default; }
+  .tp-row { display: grid; grid-template-columns: 62px repeat(3, 1fr); gap: 4px; align-items: center; }
+  .tp-row.single { grid-template-columns: 62px 1fr 2fr; }
+  .tp-row input {
+    width: 100%;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 3px 4px;
+  }
+  .tp-row input:focus { outline: none; border-color: var(--accent); }
+  .tp-row .axis-x { border-bottom-color: #e64d45; }
+  .tp-row .axis-y { border-bottom-color: #66cc66; }
+  .tp-row .axis-z { border-bottom-color: #4d80f2; }
+  .tp-actions { display: flex; gap: 6px; }
+  .tp-actions .view-btn { flex: 1; text-align: center; }
+  .tp-note { line-height: 1.5; color: var(--text-dim); }
+  .tp-note:empty { display: none; }
+  .tp-note b { color: var(--text); font-weight: 600; }
+  .tp-measure { display: flex; gap: 6px; align-items: center; }
+  .tp-measure input { width: 70px; font-family: var(--font-mono); font-size: 11px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 3px 4px; }
 
   .nav-hint {
     position: absolute;
@@ -379,6 +458,7 @@
     color: var(--text-dim);
   }
   .length-warn:empty { display: none; }
+  .length-warn.note { border-color: var(--border); background: none; }
   .length-warn p { margin: 0; }
   .length-warn b { color: var(--text); font-weight: 600; }
 
@@ -440,7 +520,16 @@
       <div class="layer-toggle" id="layerToggle" hidden role="group" aria-label="Show splat or mesh">
         <button data-layer="splat" class="on">splat</button><button data-layer="mesh">mesh</button>
       </div>
-      <div class="nav-hint">drag orbit · scroll zoom · WASD move · ←→ turn · ↑↓ look</div>
+      <div class="view-stack" id="viewStack" hidden>
+        <div class="grid-ctl">
+          <label><input type="checkbox" id="gridCheckbox" /> grid</label>
+          <input type="range" id="gridSlider" min="0" max="9" step="1" value="6" aria-label="Grid cell size" />
+          <span class="value" id="gridValue">1 units</span>
+        </div>
+        <button class="view-btn" id="transformBtn" aria-expanded="false">transform</button>
+        <div class="transform-panel" id="transformPanel" hidden></div>
+      </div>
+      <div class="nav-hint">drag orbit · scroll zoom · WASD move · Q/E down/up · ←→ turn · ↑↓ look</div>
     </main>
   </div>
 

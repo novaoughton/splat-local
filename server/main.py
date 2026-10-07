@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import pipeline, projects, versions
 from .presets import DEFAULT_PRESET, PRESETS
 from .pipeline import Job
+from .stages import frames as frames_stage
 
 app = FastAPI()
 
@@ -40,7 +41,7 @@ async def _run_and_save(job: Job):
 
 @app.get("/api/presets")
 async def list_presets():
-    """Each preset's settings, so the UI can reason about frame counts."""
+    """Each preset's settings, so the UI can estimate frame counts and length limits."""
     return {name: dataclasses.asdict(preset) for name, preset in PRESETS.items()}
 
 
@@ -75,6 +76,23 @@ async def clean_job(job_id: str):
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return {"freed": freed, "bytes": projects.disk_bytes(job.work)}
+
+
+@app.put("/api/jobs/{job_id}/transform")
+async def set_transform(job_id: str, request: Request):
+    """Save the viewer's asset and anchor transforms with the project."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.running:
+        raise HTTPException(409, "the job is still running")
+    try:
+        transform = projects.clean_transform(await request.json())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    job.update(transform=transform)
+    await asyncio.to_thread(projects.save, job)
+    return {"transform": transform}
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -117,6 +135,15 @@ async def create_job(
         ext = Path(video.filename or "input.mp4").suffix or ".mp4"
         with (job.work / f"input{ext}").open("wb") as f:
             shutil.copyfileobj(video.file, f)
+        # The start screen already stops an over-long video; this catches other clients.
+        limit = PRESETS[preset].max_video_s
+        if limit is not None:
+            duration = await asyncio.to_thread(frames_stage.probe_duration, job.work / f"input{ext}")
+            if duration > limit:
+                shutil.rmtree(job.work, ignore_errors=True)
+                raise HTTPException(
+                    400, f"the video runs {duration:.0f} s; the '{preset}' preset takes up to {limit:.0f} s",
+                )
         # input_url is published so any tab can show the footage next to the
         # reconstruction — the one that uploaded still has the bytes, but a
         # reload or a second tab only has the job id.
@@ -204,15 +231,26 @@ async def job_file(job_id: str, path: str):
     return FileResponse(target)
 
 
+class AppFiles(StaticFiles):
+    """Static files the browser must revalidate on every load (a cheap 304 when
+    unchanged). With no Cache-Control, Safari guesses a lifetime and kept running
+    the old app.js and viewer modules after an update, even across reloads."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Mount the two viewer libraries individually rather than all of vendor/: that
 # directory also holds the Brush source tree and its build output (~5 GB), none
 # of which the browser has any business fetching.
-app.mount("/vendor/spark", StaticFiles(directory="vendor/spark"), name="vendor_spark")
-app.mount("/vendor/three", StaticFiles(directory="vendor/three"), name="vendor_three")
+app.mount("/vendor/spark", AppFiles(directory="vendor/spark"), name="vendor_spark")
+app.mount("/vendor/three", AppFiles(directory="vendor/three"), name="vendor_three")
 # The viewer engine web/ and site/ share; pages resolve it via the "splat-viewer/"
 # import map entry, so this path and the site's ./viewer/ can differ freely.
-app.mount("/viewer", StaticFiles(directory="viewer"), name="viewer")
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+app.mount("/viewer", AppFiles(directory="viewer"), name="viewer")
+app.mount("/", AppFiles(directory="web", html=True), name="web")
 
 
 if __name__ == "__main__":

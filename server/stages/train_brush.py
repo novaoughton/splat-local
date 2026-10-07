@@ -3,13 +3,25 @@ import queue
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 
+from .. import report
 from ..pipeline import JobCancelled
 from .preview import PartialFile, write_preview
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _STEP_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def _ply_vertex_count(path: Path) -> int | None:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096).decode("latin-1")
+        m = re.search(r"element vertex (\d+)", head)
+        return int(m.group(1)) if m else None
+    except OSError:
+        return None
 
 
 def _resolve_bin() -> str:
@@ -59,6 +71,9 @@ def run(job, work: Path, preset):
         args += ["--render-mode", "mip"]
 
     job.update(message="training splats", progress=0.0)
+    started = time.time()
+    timeline: list[dict] = []
+    report.note(job, "train", images=n_images, command=" ".join(args[1:]), checkpoints=timeline)
 
     proc = subprocess.Popen(
         args, start_new_session=True,
@@ -115,6 +130,7 @@ def run(job, work: Path, preset):
             except PartialFile:
                 return  # Brush is still writing it; the next scan will get it
             seen_checkpoints.add(p.name)
+            timeline.append({"step": step, "seconds": round(time.time() - started), "splats": _ply_vertex_count(p)})
             last_streamed.update(file=p.name, streamed=name, step=step)
             job.update(checkpoint={
                 "url": job.file_url(f"checkpoints/{name}"),

@@ -1,4 +1,6 @@
 import { createViewer } from "./viewer.js";
+import { CELL_STEPS, formatCell } from "./grid.js";
+import { createTransformPanel } from "./transform-panel.js";
 
 const $ = (id) => document.getElementById(id);
 const sidebar = $("sidebar");
@@ -54,6 +56,60 @@ let splatCountUrl = null; // the checkpoint URL splatCount belongs to
 let splatCountKey = null; // last lookup made, so state events don't repeat it
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
+
+// Grid and transforms, for finished projects. Edits save with the project a
+// moment after the last change; nothing is baked into the downloads yet.
+const viewStack = $("viewStack");
+const gridCheckbox = $("gridCheckbox");
+const gridSlider = $("gridSlider");
+const gridValue = $("gridValue");
+const transformBtn = $("transformBtn");
+let transformApplied = false; // the open project's saved transform is on screen
+
+function updateGrid() {
+  const cell = CELL_STEPS[+gridSlider.value];
+  gridValue.textContent = formatCell(cell, transformPanel.scaled);
+  viewer.setGrid({ visible: gridCheckbox.checked, cell });
+}
+gridCheckbox.addEventListener("change", () => { updateGrid(); gridCheckbox.blur(); });
+gridSlider.addEventListener("input", updateGrid);
+gridSlider.addEventListener("change", () => gridSlider.blur()); // hand WASD back to the viewer
+
+let saveTimer = null;
+function saveTransform() {
+  clearTimeout(saveTimer);
+  const id = jobId;
+  saveTimer = setTimeout(() => {
+    if (!id || id !== jobId) return;
+    fetch(`/api/jobs/${encodeURIComponent(id)}/transform`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...viewer.getTransform(), scaled: transformPanel.scaled }),
+    }).then((r) => { if (!r.ok) console.error("saving the transform failed:", r.status); })
+      .catch((e) => console.error("saving the transform failed:", e));
+  }, 500);
+}
+
+const transformPanel = createTransformPanel($("transformPanel"), viewer, {
+  onChange() { saveTransform(); updateGrid(); },
+  onAnchorTab() { if (!gridCheckbox.checked) { gridCheckbox.checked = true; updateGrid(); } },
+});
+transformBtn.addEventListener("click", () => setTransformOpen(transformBtn.getAttribute("aria-expanded") !== "true"));
+
+function setTransformOpen(open) {
+  transformBtn.setAttribute("aria-expanded", String(open));
+  transformBtn.classList.toggle("on", open);
+  transformPanel.setOpen(open);
+}
+
+function hideViewTools() {
+  setTransformOpen(false);
+  viewStack.hidden = true;
+  gridCheckbox.checked = false;
+  transformPanel.scaled = false;
+  transformApplied = false;
+  updateGrid();
+}
 
 function escapeHTML(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -261,7 +317,7 @@ function renderVideoPreview() {
     videoSrc(),
     `<span>${selectedFile.name} · ${humanSize(selectedFile.size)}</span><button id="clearBtn">remove</button>`,
   );
-  // The duration decides whether the preset's frames will be close enough together.
+  // The duration sets how many frames the preset will take.
   els.previewSlot.querySelector("video").addEventListener("loadedmetadata", (e) => {
     selectedDuration = Number.isFinite(e.target.duration) ? e.target.duration : null;
     updateLengthWarning();
@@ -278,10 +334,13 @@ function renderVideoPreview() {
   els.startBtn.disabled = false;
 }
 
-// Presets take a fixed number of frames, so a long video spreads them out. Past
-// ~1.5 s apart they stop overlapping enough for poses: the 9-minute bedroom test
-// failed at 2.8 s, while 0.7 s (desk) and 1.0 s (a 3-minute clip) worked.
-const MAX_FRAME_GAP_S = 1.5;
+// Presets take one frame per `frame_spacing_s` of video (at least `min_frames`), so a
+// longer video gets more frames rather than sparser ones. Mirrors server/presets.py
+// frame_plan.
+function framePlan(p, duration) {
+  const count = Math.max(p.min_frames, Math.round(Math.max(duration, 0.1) / p.frame_spacing_s));
+  return { count, spacing: duration / count };
+}
 let presetInfo = null; // GET /api/presets
 let selectedDuration = null; // seconds, once the preview has read the metadata
 
@@ -295,20 +354,23 @@ function formatDuration(s) {
 function updateLengthWarning() {
   if (currentPanel !== "idle" || !els.lengthWarn) return;
   const preset = els.presetSelect.value;
-  const frames = presetInfo?.[preset]?.frames;
-  const gap = selectedDuration && frames ? selectedDuration / frames : 0;
-  if (gap <= MAX_FRAME_GAP_S) { els.lengthWarn.innerHTML = ""; return; }
+  const info = presetInfo?.[preset];
+  if (!selectedDuration || !info?.frame_spacing_s) { els.lengthWarn.innerHTML = ""; return; }
   const labelOf = (name) => [...els.presetSelect.options].find((o) => o.value === name)?.textContent.split(" —")[0] || name;
   const label = labelOf(preset);
-  const better = Object.entries(presetInfo)
-    .filter(([name, p]) => name !== preset && selectedDuration / p.frames <= MAX_FRAME_GAP_S)
-    .sort((a, b) => a[1].frames - b[1].frames)[0];
-  els.lengthWarn.innerHTML = `
-    <p><b>This video may be too long for ${escapeHTML(label)}.</b> It runs ${formatDuration(selectedDuration)}, and ${escapeHTML(label)} uses ${frames} frames,
-    so they'd be about ${gap.toFixed(1)} s apart. That's usually too far for the camera positions to be worked out.</p>
-    <p>${better ? `The ${escapeHTML(labelOf(better[0]))} preset (${better[1].frames} frames) keeps them ${(selectedDuration / better[1].frames).toFixed(1)} s apart. Or t` : "T"}rim it to the best 2–3 minutes, or film one video per area.
-    <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a></p>
-  `;
+  const fits = (p) => p.max_video_s == null || selectedDuration <= p.max_video_s;
+  els.lengthWarn.classList.toggle("note", fits(info));
+  if (!fits(info)) {
+    const other = Object.entries(presetInfo).find(([name, p]) => name !== preset && fits(p));
+    els.lengthWarn.innerHTML = `
+      <p><b>This video is too long for ${escapeHTML(label)}.</b> It runs ${formatDuration(selectedDuration)}, and ${escapeHTML(label)} takes up to ${formatDuration(info.max_video_s)}.</p>
+      <p>${other ? `The ${escapeHTML(labelOf(other[0]))} preset takes it. Or t` : "T"}rim it to the best 2–3 minutes, or film one video per area.
+      <a class="guide-link" href="/capture.html" target="_blank" rel="noopener">Capture guide →</a></p>
+    `;
+    return;
+  }
+  const { count, spacing } = framePlan(info, selectedDuration);
+  els.lengthWarn.innerHTML = `<p>${escapeHTML(label)} will use about <b>${count} frames</b> from this ${formatDuration(selectedDuration)} video, one every ${spacing.toFixed(1)} s.</p>`;
 }
 
 function mountRunning() {
@@ -361,6 +423,7 @@ function mountDone() {
   // frusta are clutter; they stay one click away.
   frustaCheckbox.checked = false;
   viewer.setFrustaVisible(false);
+  viewStack.hidden = false;
   els.cleanBtn.addEventListener("click", cleanProject);
   loadDisk();
 }
@@ -403,10 +466,11 @@ function mountError() {
     <div class="eyebrow" id="errorEyebrow">error</div>
     <h2 class="panel-title" id="errorTitle">Something went wrong</h2>
     <div class="failure" id="errorMsg"></div>
+    <a class="guide-link" id="reportLink" download hidden>Download the debug report →</a>
     <hr class="hr" />
     ${projectButtonsHTML()}
   `;
-  els = { title: $("errorTitle"), msg: $("errorMsg"), eyebrow: $("errorEyebrow") };
+  els = { title: $("errorTitle"), msg: $("errorMsg"), eyebrow: $("errorEyebrow"), reportLink: $("reportLink") };
   wireProjectButtons();
 }
 
@@ -524,6 +588,10 @@ function updateError(state) {
     : (state.error || "").startsWith("interrupted") ? `interrupted during ${stage}`
     : `failed at ${stage}`;
   els.title.textContent = state.name || (cancelled ? "Job cancelled" : "Reconstruction failed");
+  // Timings, memory and settings up to the point it stopped.
+  const reportFile = (state.artifacts || []).find((a) => a.name === "debug-report.md");
+  els.reportLink.hidden = !reportFile;
+  if (reportFile) els.reportLink.href = reportFile.url;
 
   // Rebuilt only when the content changes, so an open "technical details" stays open.
   const raw = state.error || state.message || "";
@@ -547,6 +615,13 @@ function updateError(state) {
 }
 
 function updateViewer(state) {
+  // Before setCameras(): the opening view is framed through the transform.
+  if (currentPanel === "done" && !transformApplied) {
+    transformApplied = true;
+    viewer.setTransform(state.transform || null);
+    transformPanel.scaled = !!state.transform?.scaled;
+    updateGrid();
+  }
   if (state.sparse_url && state.sparse_url !== lastSparseUrl) {
     lastSparseUrl = state.sparse_url;
     viewer.loadSparse(state.sparse_url);
@@ -642,6 +717,12 @@ function connectEvents(id) {
 
 function startJob() {
   if (!selectedFile) return;
+  // Refuse before uploading: the server would only say no after the whole video arrived.
+  const limit = presetInfo?.[els.presetSelect.value]?.max_video_s;
+  if (limit != null && selectedDuration > limit) {
+    els.startMsg.textContent = "This video is too long for the chosen preset; see above.";
+    return;
+  }
   els.startBtn.disabled = true;
   els.startMsg.textContent = "";
   const form = new FormData();
@@ -653,6 +734,10 @@ function startJob() {
   fetch("/api/jobs", { method: "POST", body: form })
     .then(async (r) => {
       if (r.status === 409) throw new Error("A job is already running.");
+      if (r.status === 400) {
+        const detail = (await r.json().catch(() => ({}))).detail;
+        if (detail) throw new Error(`Couldn't start: ${detail}.`);
+      }
       if (!r.ok) throw new Error(`Failed to start job (${r.status}).`);
       return r.json();
     })
@@ -697,6 +782,7 @@ function resetToIdle() {
   frustaToggle.hidden = true;
   resetViewBtn.hidden = true;
   layerToggle.hidden = true;
+  hideViewTools();
   layerShown = "splat";
   layerToggle.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.layer === "splat"));
   hudCheckpoint = null;

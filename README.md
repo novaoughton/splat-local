@@ -71,17 +71,19 @@ not a replacement for the native pipeline's reconstruction quality.
 
 Upload a video, pick a preset, watch it build. Presets:
 
-| Preset  | Frames | Res  | Steps | Poses    | Training   | Total             |
-|---------|--------|------|-------|----------|------------|-------------------|
-| Preview | 100    | 1536 | 10k   | ~1 min   | ~7 min     | ~8 min ¹          |
-| High    | 200    | 2048 | 18k   | 2–10 min | ~11 min    | **~14 min** ²     |
-| Max     | 250    | 2560 | 45k   | 10–20 min| ~35–50 min | ~45 min – 1.2 h ¹ |
+| Preset  | Frame every | Res  | Steps | Poses    | Training   | Total             |
+|---------|-------------|------|-------|----------|------------|-------------------|
+| Preview | 1.0 s       | 1536 | 10k   | ~1 min   | ~7 min     | ~8 min ¹          |
+| High    | 0.8 s       | 2048 | 18k   | 2–10 min | ~11 min    | **~14 min** ²     |
+| Max     | 0.7 s       | 2560 | 45k   | 10–20 min| ~35–50 min | ~45 min – 1.2 h ¹ |
+
+A preset keeps the sharpest frame in each window of that length (at least 60 / 80 / 100 frames), so a 3-minute video gets about 180 / 225 / 260 frames and a longer one more. The times above were measured or estimated at 100–250 frames; pose time grows faster than frame count.
 
 <sub>Measured on an M5 Pro MacBook Pro (18-core, 48 GB unified memory).</sub>
 
 <sub>² **High is the measured row**, end to end: 166 frames at 2048 px, 18k steps → 11 s frame selection + 2 m 18 s COLMAP + 10 m 53 s training = **13 m 22 s**. The demo GIFs above are from the same scene at the old 30k setting, which took 24 m 42 s — 30k was cut to 18k because held-out PSNR stops moving once densification stops, at no measurable quality cost ([docs/step-count.md](docs/step-count.md)).</sub>
 
-<sub>¹ **Preview and Max are estimates, not measurements**, and the step rate is not a constant you can extrapolate from. Per-step cost rises with splat count, and splats keep growing until `growth_stop` — so the same scene trained at 2048 px averaged 22.6 steps/s over a 30k run but 27.6 steps/s over an 18k one, because the longer run spent half its life at full splat count. Max is the softest number in the table: 45k steps at 2560 px with LPIPS loss enabled, none of which the measured run exercised. Its range brackets a flat extrapolation at the low end and the LPIPS/resolution penalty at the high end.</sub>
+<sub>¹ **Preview and Max are estimates, not measurements**, and the step rate is not a constant you can extrapolate from. Per-step cost rises with splat count, and splats keep growing until `growth_stop` — so the same scene trained at 2048 px averaged 22.6 steps/s over a 30k run but 27.6 steps/s over an 18k one, because the longer run spent half its life at full splat count. Max is the softest number in the table: 45k steps at 2560 px, neither of which the measured run exercised. (Max used to add an LPIPS loss too; at 2560 px it pushed training past 25 GB, so it's off until Brush can compute it on downsampled images.)</sub>
 
 **Pose time varies a lot with the scene.** COLMAP scales superlinearly with frame count and how hard the footage is to match — two runs here took 2 m 18 s at 166 frames and 10 m 1 s at 201 frames. Training is far more predictable, but it is not linear in step count: a run that spends more of its life past `growth_stop` carries a bigger splat set for longer and averages a lower rate.
 
