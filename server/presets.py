@@ -36,7 +36,9 @@ PRESETS = {
         max_resolution=1536,
         total_steps=10_000,
         growth_stop=6_000,
-        max_splats=1_500_000,
+        # 3M, not 1.5M: the 69 s desk clip hit 1.5M by step 4,000 of 10,000 and stopped
+        # growing. Training peaked at 5.5 GB there (~2.3 KB per splat), so 3M is ~9 GB.
+        max_splats=3_000_000,
         export_every=500,
         mesh_detail="reduced",
     ),
@@ -63,7 +65,10 @@ PRESETS = {
         growth_stop=25_000,
         max_splats=6_000_000,
         export_every=1000,
-        lpips_weight=0.25,
+        # No LPIPS: Brush runs VGG-LPIPS on the full-size render with gradients, and at
+        # 2560 px that took training past 25 GB within 90 s (4.1 GB without it), stalling
+        # a 24 GB Mac. Revisit by having Brush downsample both images before LPIPS.
+        lpips_weight=0.0,
         mesh_detail="full",
     ),
 }
