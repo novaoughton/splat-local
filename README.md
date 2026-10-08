@@ -1,150 +1,181 @@
-<h1 align="center">Splat Local</h1>
+# Splat Local
 
-<p align="center"><b>Video → 3D Gaussian splat. In your browser, or fully local on Apple Silicon. No cloud, no upload.</b></p>
+Turn a phone video of a room into a **3D Gaussian splat**, and optionally a **textured mesh**, entirely on your Mac. Then fly through it, level it, scale it to real metres, and export it ready for Unity.
 
-<p align="center">
-  <img alt="100% local" src="https://img.shields.io/badge/runs-100%25_local-2ea44f">
-  <img alt="Runs in the browser" src="https://img.shields.io/badge/browser-Chrome_%2F_Edge_WebGPU-4285F4?logo=googlechrome&logoColor=white">
-  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple_Silicon-Metal_%2F_MPS-black?logo=apple&logoColor=white">
-  <img alt="No cloud, no CUDA" src="https://img.shields.io/badge/cloud-none-blue">
-  <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white">
-  <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-lightgrey">
-</p>
+You use it in your web browser, but nothing leaves your computer: the app runs locally and the browser just shows its interface at `http://127.0.0.1:8000`.
 
-**Your video never leaves your machine.** Hosted tools like Luma and Polycam upload your footage to their servers; Splat Local reconstructs it on the device in front of you. Walk through a space once, get a 3D scene you can fly through forever — no account, no API keys, no CUDA.
+---
 
-Two ways to run it:
+## Requirements
 
-| | [Browser creator](https://michael-l-i.github.io/splat-local/create/) | [Native pipeline](#quickstart) |
-|---|---|---|
-| Runs on | any desktop Chrome / Edge with WebGPU | Apple Silicon Mac |
-| Install | none — open the page | `./setup.sh` |
-| Quality | experimental, lower resolution | COLMAP poses + Metal-native Brush training |
-| Output | `.ply` + `.spz` | full-resolution `.ply` + `.spz`, live training preview |
+| | |
+|---|---|
+| **Computer** | An **Apple Silicon Mac** (M1 or later). Intel Macs, Windows and Linux are not supported. |
+| **Memory** | 24 GB runs *Preview* and *High* (High peaked at 16 GB on a 7-minute 4K video). *Max* needs much more; see [Presets](#presets). |
+| **Disk** | About **15 GB** for the tools, plus **1–10 GB per project**. |
+| **Software** | [Homebrew](https://brew.sh) and the Xcode Command Line Tools. `setup.sh` installs everything else: ffmpeg, uv/Python, Node.js, Rust and the Brush trainer. |
 
-<table>
-<tr>
-<th align="center">🎥 record a walkthrough</th>
-<th align="center">✨ get an explorable 3D scene</th>
-</tr>
-<tr>
-<td><img src="docs/demo/input.gif" width="380" alt="input: an 11s home walkthrough video"></td>
-<td><img src="docs/demo/splat-tour.gif" width="380" alt="output: interactive splat, toured in the built-in viewer"></td>
-</tr>
-</table>
+## Set up (once)
 
-<sub>An 11 s phone-style walkthrough → a splat you can fly through with WASD/arrow keys. 166 frames, COLMAP poses, 18k training steps — **13 m 22 s end to end** on an M5 Pro MacBook. (The GIFs themselves were rendered from an earlier 30k-step run of the same scene, before the step count was cut; the cut costs nothing measurable — see ² below.) Footage: [Pexels #7578547](https://www.pexels.com/video/video-of-a-house-interior-7578547/) (free license).</sub>
+```bash
+# 1. If you don't have them yet:
+#    Homebrew:  see https://brew.sh
+xcode-select --install
 
-**[Fly through that scene in your browser →](https://michael-l-i.github.io/splat-local/)** — the same viewer this app ships, running on the reconstruction above. It also [opens your own splat files](https://michael-l-i.github.io/splat-local/viewer.html) (`.ply`, `.spz`, `.sog`, `.splat`, `.ksplat`), locally.
+# 2. Get the app and run the setup script
+git clone https://github.com/novaoughton/splat-local.git
+cd splat-local
+./setup.sh
+```
 
-## Why
+`setup.sh` takes **10–20 minutes** the first time. Most of that is compiling the Brush splat trainer. It is safe to re-run; it skips anything already done.
 
-- **Private by construction.** Poses, training, and the viewer all run on your machine — in a browser tab or on your Mac. There is no server to upload to, no API keys, no CUDA required.
-- **You watch it build.** Training checkpoints stream straight into the browser viewer, so the scene sharpens from fog into a real space in real time instead of a progress bar.
-- **Quality that holds up.** COLMAP-grade poses + a Metal-native trainer that matches CUDA gsplat output, not a lightweight approximation.
+Generated data (the Python environment, the Brush build and every project you make) goes in **`~/SplatPipelineData`**, outside the repo. To put it somewhere else, set `SPLAT_DATA_DIR`, e.g. `SPLAT_DATA_DIR=/Volumes/Fast/splat ./setup.sh`, and use the same setting with `./run.sh`.
+
+## Run
+
+```bash
+./run.sh
+```
+
+Open **http://127.0.0.1:8000** in Safari or Chrome. Leave the terminal open while you use the app, and press **Ctrl+C** in it to stop. To use another port: `PORT=8765 ./run.sh`.
+
+## Use it
+
+1. **Drop a video** on the start screen. A 2–3 minute walk around a room works best; see the in-app **capture guide**.
+2. Choose:
+   - **Output**: *Gaussian splat* (photoreal), *Mesh* (textured, for collisions/geometry) or *Both*, which are already lined up with each other.
+   - **Preset**: *Preview*, *High* (default) or *Max*. The start screen shows how many frames your video will give.
+   - **Pose backend**: leave it on *COLMAP*.
+3. **Start reconstruction** and watch it build. Stages: frames → camera positions → (mesh) → training → export. The viewer streams the splat as it trains.
+4. When it's done, the sidebar lists the **downloads**:
+   - `scene.ply`: the full splat, the archive copy.
+   - `scene.spz`: the same splat compressed.
+   - `scene-view.sog`: a lighter version for viewers.
+   - `mesh.zip`: OBJ and textures.
+   - `debug-report.md`: timings, memory, settings and quality metrics for the run.
+
+### Viewer controls
+
+| | |
+|---|---|
+| drag | orbit |
+| scroll | zoom |
+| **W A S D** | move |
+| **Q / E** | down / up |
+| **← →** | turn |
+| **↑ ↓** | look up / down |
+
+Top right:
+- **camera frusta**: show where each frame was taken.
+- **reset view**
+- **splat / mesh** switch
+- **grid**, with a cell-size slider from 1 cm to 10 m
+- **transform**: the panel below
+
+### Line it up and export for Unity
+
+Open **transform**:
+
+1. **anchor → floor**: click 3 spots on open floor, spread well apart. The grid snaps to the floor, which becomes y = 0 in the export.
+2. **anchor → rotate**: turn the grid so its blue **Z axis faces the front** of the room.
+3. **assets → measure**: click both ends of something whose size you know, such as a door's height, and type the real length in metres. The scene is then in real metres.
+4. Optionally **assets → move / rotate / scale** to adjust by hand. You can type values or drag the handles; **find** brings the handles into view.
+
+Transforms save automatically with the project. Then click **Export for Unity** in the sidebar. It writes three new downloads and leaves the originals untouched:
+- `scene-unity.ply`: the splat
+- `mesh-unity.zip`: the mesh
+- `unity-transform.json`: the exact transform applied
+
+They're right-handed with +Y up and +Z forward, the anchor at the origin, in metres. If you change the transform afterwards, the sidebar says **out of date** until you export again.
+
+## Presets
+
+| | Preview | High | Max |
+|---|---|---|---|
+| Frame every | 1.0 s | 0.8 s | 0.7 s |
+| Resolution (long edge) | 1536 px | 2048 px | 2560 px |
+| Training steps | 10k | 18k | 45k |
+| Splat cap | 3M | 4M | 6M |
+| LPIPS perceptual loss | – | – | on |
+| Longest video | – | 8 min | – |
+| Mesh detail | reduced | medium | full |
+
+Longer videos get more frames rather than sparser ones. **Measured** on an M4 Pro with 24 GB, a 7-minute 4K room on High took **52 min** end to end and peaked at **16 GB**.
+
+**Max is for big machines.** Its LPIPS loss runs an image network on every full-size frame Brush renders. On a 24 GB Mac it took training past 25 GB within 90 seconds and stalled. On a smaller machine, run Max without LPIPS:
+
+```bash
+SPLAT_LPIPS=0 ./run.sh
+```
+
+## Running a Max test
+
+For whoever is testing Max on a bigger Mac:
+
+1. **Prepare the Mac:**
+   - Plug in power.
+   - Keep the lid open and the Mac awake. For example, run `caffeinate -dimsu` in a second terminal while it trains.
+   - Quit other heavy apps.
+2. **Start** `./run.sh`, open the app, and drop the test video. Choose **Output: Both**, **Preset: Max**, then **Start reconstruction**.
+3. **Close the browser tab while it trains.** The live viewer holds a few GB of memory. The job keeps running, and reopening `http://127.0.0.1:8000` reattaches to it.
+4. **Watch Activity Monitor → Memory.** If memory pressure goes red, swap keeps climbing, and the progress bar hasn't moved for 20+ minutes:
+   - cancel the job
+   - stop the app
+   - run it again with `SPLAT_LPIPS=0 ./run.sh`
+   - note that you did
+5. **When it finishes, fails or is cancelled,** download **`debug-report.md`**: it's in the downloads list, or behind the link on the failure screen. It's also on disk at `~/SplatPipelineData/jobs/<project id>/exports/debug-report.md`. Send it back, ideally with a couple of viewer screenshots.
+
+The report records each stage's time, peak memory (including GPU memory), CPU and swap, plus the machine, settings and tool versions. That's everything needed to tune Max.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `setup.sh` stops with a message | Do what it says (install Homebrew or the Command Line Tools), then re-run it. |
+| Brush fails to build | `rustup update`, then `./setup.sh` again. |
+| "Address already in use" | Another app has port 8000: `PORT=8765 ./run.sh`. |
+| The page looks out of date after an update | Reload. If that doesn't do it, in Safari choose Develop → Empty Caches, then reload. |
+| No mesh option, or the mesh fails | Install the Command Line Tools (`xcode-select --install`), then `./setup.sh`. |
+| Only some frames placed / patchy splat | Usually the footage. Follow the capture guide: move slowly, lock exposure, avoid pointing straight at windows. |
+| Disk filling up | **Clean up working files** on a finished project frees most of it; deleting a project removes its folder. Projects live in `~/SplatPipelineData/jobs/`. |
 
 ## How it works
 
 ```
-video ──▶ sharp frames ──▶ camera poses ──▶ splat training ──▶ export
-          (ffmpeg +        (COLMAP, or       (Brush: Metal-      (splat-transform:
-           sharp-frames)    Depth Anything 3  native 3DGS w/      .ply/.spz archive
-                            on MPS)           MCMC + mip AA)      + .sog for the viewer)
+video ─▶ sharpest frames ─▶ camera positions ─▶ (mesh) ─▶ splat training ─▶ export
+         sharp-frames       COLMAP/GLOMAP        Object    Brush (Metal)     splat-transform
+                            (pycolmap)           Capture
 ```
 
-- **Poses**: [COLMAP](https://colmap.github.io) (`pycolmap`) with sequential matching + loop detection — best quality. Mapping runs on [GLOMAP](https://lpanaf.github.io/eccv24_glomap/)'s global solver, which is 1.2–2.0x faster than incremental mapping, with an automatic quality-gated fallback to the incremental mapper (see [Pose mapper](#pose-mapper)). Optional experimental backend: [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) running on Apple's MPS — much faster, slightly lower fidelity.
-- **Training**: [Brush](https://github.com/ArthurBrussee/brush) — a Rust/Metal Gaussian-splat trainer that matches CUDA gsplat quality (MCMC densification, Mip-Splatting antialiasing, optional LPIPS loss). It exports `.ply` checkpoints throughout training, which the UI streams into a live [Spark](https://sparkjs.dev) viewer. The stream carries SH-truncated copies — dropping the SH bands above degree 1 sheds 36 of a checkpoint's 59 float properties, so previews are 2.6× smaller (a late checkpoint is ~45 MB instead of ~115 MB) and 2.6× cheaper to parse. The full-SH scene lands on screen the moment training ends.
-- **Export**: two artifact families, split on purpose. The **archive** you download (`scene.ply`, `scene.spz`) is full resolution with SH3 and only NaN/degenerate gaussians dropped — no quality decisions applied. The **view** artifact (`scene-view.sog`) is the same scene with near-transparent splats filtered out and Morton-reordered, which is what the browser loads. Half the splats in a typical scene are nearly invisible but still cost fill rate, so filtering them cuts overdraw ~22% without touching what you keep.
-- **Everything runs on your Mac.** No cloud, no CUDA. (The [browser creator](browser/README.md) is a separate, smaller pipeline with the same rule: everything runs in the tab.)
+- **Frames:** the sharpest frame in every 0.7–1.0 s window ([sharp-frames](https://github.com/Reflct/sharp-frames-python)).
+- **Camera positions:** [COLMAP](https://colmap.github.io) via `pycolmap`, global mapping (GLOMAP) with an incremental fallback. Cameras placed off the walking path or outside the room are dropped.
+- **Mesh:** Apple's Object Capture (`tools/objcap`), lined up with the splat through its camera positions.
+- **Training:** [Brush](https://github.com/ArthurBrussee/brush), a Rust/Metal Gaussian-splat trainer.
+- **Export:** [splat-transform](https://github.com/playcanvas/splat-transform).
+- **Viewer:** [Spark](https://sparkjs.dev) on [three.js](https://threejs.org).
 
-## Quickstart
-
-```bash
-./setup.sh        # installs ffmpeg/uv if missing, syncs Python env, fetches/builds Brush
-./run.sh          # serves http://127.0.0.1:8000
-```
-
-No Mac, or nothing to install? The [browser creator](https://michael-l-i.github.io/splat-local/create/)
-([source](browser/README.md)) runs video decoding, a small camera solver and Brush
-training entirely in desktop Chrome/Edge. It is experimental and lower-resolution,
-not a replacement for the native pipeline's reconstruction quality.
-
-Upload a video, pick a preset, watch it build. Presets:
-
-| Preset  | Frame every | Res  | Steps | Poses    | Training   | Total             |
-|---------|-------------|------|-------|----------|------------|-------------------|
-| Preview | 1.0 s       | 1536 | 10k   | ~1 min   | ~7 min     | ~8 min ¹          |
-| High    | 0.8 s       | 2048 | 18k   | 2–10 min | ~11 min    | **~14 min** ²     |
-| Max     | 0.7 s       | 2560 | 45k   | 10–20 min| ~35–50 min | ~45 min – 1.2 h ¹ |
-
-A preset keeps the sharpest frame in each window of that length (at least 60 / 80 / 100 frames), so a 3-minute video gets about 180 / 225 / 260 frames and a longer one more. The times above were measured or estimated at 100–250 frames; pose time grows faster than frame count.
-
-<sub>Measured on an M5 Pro MacBook Pro (18-core, 48 GB unified memory).</sub>
-
-<sub>² **High is the measured row**, end to end: 166 frames at 2048 px, 18k steps → 11 s frame selection + 2 m 18 s COLMAP + 10 m 53 s training = **13 m 22 s**. The demo GIFs above are from the same scene at the old 30k setting, which took 24 m 42 s — 30k was cut to 18k because held-out PSNR stops moving once densification stops, at no measurable quality cost ([docs/step-count.md](docs/step-count.md)).</sub>
-
-<sub>¹ **Preview and Max are estimates, not measurements**, and the step rate is not a constant you can extrapolate from. Per-step cost rises with splat count, and splats keep growing until `growth_stop` — so the same scene trained at 2048 px averaged 22.6 steps/s over a 30k run but 27.6 steps/s over an 18k one, because the longer run spent half its life at full splat count. Max is the softest number in the table: 45k steps at 2560 px, neither of which the measured run exercised. (Max used to add an LPIPS loss too; at 2560 px it pushed training past 25 GB, so it's off until Brush can compute it on downsampled images.)</sub>
-
-**Pose time varies a lot with the scene.** COLMAP scales superlinearly with frame count and how hard the footage is to match — two runs here took 2 m 18 s at 166 frames and 10 m 1 s at 201 frames. Training is far more predictable, but it is not linear in step count: a run that spends more of its life past `growth_stop` carries a bigger splat set for longer and averages a lower rate.
-
-### Pose mapper
-
-Mapping is the expensive part of the pose stage — 80% of it at 165 frames, 71% at 200. It runs
-GLOMAP's global solver by default, then checks the result and automatically falls back to the
-incremental mapper if it does not hold up:
-
-| Frames | Incremental | GLOMAP + gate | Speedup | Mapping step alone |
-|--------|-------------|---------------|---------|--------------------|
-| 165    | 2 m 55 s    | **1 m 47 s**  | 1.64x   | 139.8 s → 70.6 s (1.98x) |
-| 200    | 7 m 32 s    | **6 m 11 s**  | 1.22x   | 320.6 s → 238.9 s (1.34x) |
-
-How much you save depends on the scene: the global solver's cost grows much more slowly than the
-incremental one's, but so does the share of the stage it can address — feature extraction and
-matching are untouched, and on the 200-frame scene they are already 28% of the total.
-
-```bash
-SPLAT_MAPPER=incremental ./run.sh   # off: incremental mapper only, exactly as before
-SPLAT_MAPPER=glomap      ./run.sh   # forced: global mapper, fail instead of falling back
-SPLAT_MAPPER=auto        ./run.sh   # default: global mapper, gated, auto-fallback
-```
-
-Why the gate exists, what it checks, and the held-out-view PSNR behind the default:
-[docs/pose-mapper.md](docs/pose-mapper.md).
-
-## Capture tips (quality lives and dies here)
-
-- Move **slowly** in an orbit/arc with lots of overlap; end near where you started (loop closure).
-- Lock exposure/white balance if you can; 4K 60 fps gives the frame picker more sharp frames.
-- Avoid moving subjects, whip pans, and textureless walls/sky-only shots.
-
-## Notes
-
-- Optional DA3 pose backend: `uv sync --group da3` (Python 3.12 venv, installs PyTorch). Uses `depth-anything/DA3-LARGE` by default; override with `DA3_MODEL=depth-anything/DA3-SMALL ./run.sh` for speed.
-- Optional `.spz` archive + `.sog` viewer export uses `npx @playcanvas/splat-transform` (needs Node). Without it you still get the raw `scene.ply`.
-- Optional **mesh output** (choose *Mesh* or *Both* at upload): a textured `.obj` from Apple's Object Capture, lined up with the splat so it can serve as collision geometry. Needs macOS 12+ on Apple Silicon and the Xcode Command Line Tools (`xcode-select --install`) to build `tools/objcap`. Photogrammetry can't reconstruct glass; the splat can.
-- Why not LingBot-World? It's an image→video *world generator* (28B params, CUDA-only, no 3D output) — the wrong tool for video→3D reconstruction, and it can't run on a Mac. This project uses the reconstruction stack that modern world-model papers themselves use for geometry.
-
-## Privacy
-
-Your video, frames and splats are processed on your device and never sent anywhere — in the browser creator, the viewer and the native app alike. There are no accounts and no runtime CDN dependencies.
-
-The hosted [demo site](https://michael-l-i.github.io/splat-local/) counts page views with [GoatCounter](https://www.goatcounter.com): no cookies, no personal data, just the page, the referrer and any `?ref=` tag on the link. The script is added at deploy time by [`site/analytics.sh`](site/analytics.sh), so the native app, local builds and forks carry no analytics at all.
-
-## Contributing
-
-Bug reports, failed captures and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). New here? Start with a [`good first issue`](https://github.com/michael-L-i/splat-local/labels/good%20first%20issue). Made something? [Share your splat](https://github.com/michael-L-i/splat-local/discussions).
+More detail: [docs/api.md](docs/api.md) (HTTP API, job states, the debug report, the Unity export frame), [docs/pose-mapper.md](docs/pose-mapper.md), [docs/step-count.md](docs/step-count.md) and [docs/viewer-cost.md](docs/viewer-cost.md).
 
 ## Layout
 
-| | |
+| Path | What |
 |---|---|
-| `server/` | FastAPI app and the pipeline stages (frames, poses, optional mesh, train, export) |
-| `viewer/` | the Spark/three.js viewer engine, shared by the app and the demo site |
-| `web/` | the app's vanilla-JS UI |
-| `browser/` | the [browser creator](browser/README.md): video → splat entirely in desktop Chrome/Edge |
-| `site/` | the [demo site](https://michael-l-i.github.io/splat-local/); `site/build.sh` assembles it into `_site/` |
-| `vendor/` | Brush binary, three.js (+ OBJ/MTL loaders) and Spark builds |
-| `tools/objcap/` | Swift CLI around Apple's Object Capture, for the mesh output |
-| `jobs/` | per-run work dirs (gitignored) |
-| `scripts/` | `eval.py` — held-out PSNR/SSIM harness, dev tooling only |
-| `docs/` | [API contract](docs/api.md), [pose mapper A/B](docs/pose-mapper.md), [step count](docs/step-count.md), [viewer cost](docs/viewer-cost.md) |
+| `server/` | FastAPI app and pipeline stages (frames, poses, mesh, train, export), the Unity export (`bake.py`) and the debug report (`report.py`) |
+| `web/` | the app's interface: upload, progress, viewer, transform panel |
+| `viewer/` | the viewer engine (Spark + three.js) |
+| `tools/objcap/` | the Object Capture command-line helper (Swift) |
+| `vendor/` | Spark and three.js builds served to the browser |
+| `tests/` | unit tests: `~/SplatPipelineData/venv/bin/python -m unittest discover -s tests` |
+| `setup.sh`, `run.sh`, `env.sh` | setup, start, and where generated data lives |
+
+## Credits and licence
+
+A fork of [splat-local](https://github.com/michael-L-i/splat-local) by Michael Li (MIT, see [LICENSE](LICENSE)). This fork adds:
+- frame spacing presets
+- misplaced-camera handling
+- mesh output
+- the transform tools and Unity export
+- the debug report
+
+It builds on Brush, COLMAP/GLOMAP, sharp-frames, splat-transform, Spark, three.js and Apple's Object Capture, each under its own licence.

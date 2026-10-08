@@ -289,8 +289,7 @@ class AppFiles(StaticFiles):
 # of which the browser has any business fetching.
 app.mount("/vendor/spark", AppFiles(directory="vendor/spark"), name="vendor_spark")
 app.mount("/vendor/three", AppFiles(directory="vendor/three"), name="vendor_three")
-# The viewer engine web/ and site/ share; pages resolve it via the "splat-viewer/"
-# import map entry, so this path and the site's ./viewer/ can differ freely.
+# The viewer engine; pages resolve it via the "splat-viewer/" import map entry.
 app.mount("/viewer", AppFiles(directory="viewer"), name="viewer")
 app.mount("/", AppFiles(directory="web", html=True), name="web")
 

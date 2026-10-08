@@ -16,7 +16,7 @@
 - `POST /api/jobs/{id}/cancel` — cancel the job (kills running stage process).
 - `GET /api/jobs/{id}/files/{path}` — serves files from the job dir (frames, sparse.ply, checkpoints, exports).
 
-Static mounts, in match order: `/vendor/spark` and `/vendor/three` (the two viewer libraries only — `vendor/` also holds the ~5 GB Brush source tree), `/viewer` (the viewer engine shared with the demo site), then `/` -> `web/`.
+Static mounts, in match order: `/vendor/spark` and `/vendor/three` (the two viewer libraries only — `vendor/` also holds the ~5 GB Brush source tree), `/viewer` (the viewer engine), then `/` -> `web/`.
 
 ## SSE events
 

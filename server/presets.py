@@ -67,14 +67,15 @@ PRESETS = {
         max_resolution=2560,
         total_steps=45_000,
         growth_stop=25_000,
-        # 5M, not 6M: at ~3 KB per splat (High's measured peak) 6M would need ~21 GB of
-        # a 24 GB Mac before the app's own baseline. Confirm with a Max debug report.
-        max_splats=5_000_000,
+        # Max is for big machines. At ~3 KB per splat (High's measured peak) 6M needs
+        # ~21 GB for the splats alone, and LPIPS (below) far more: on a 24 GB Mac use
+        # High, or set SPLAT_LPIPS=0. A Max run's debug report will give real figures.
+        max_splats=6_000_000,
         export_every=1000,
-        # No LPIPS: Brush runs VGG-LPIPS on the full-size render with gradients, and at
-        # 2560 px that took training past 25 GB within 90 s (4.1 GB without it), stalling
-        # a 24 GB Mac. Revisit by having Brush downsample both images before LPIPS.
-        lpips_weight=0.0,
+        # Perceptual (VGG-LPIPS) loss for sharper detail. Brush runs it on the full-size
+        # render with gradients: at 2560 px it took training past 25 GB within 90 s
+        # (4.1 GB without it), which stalls a 24 GB Mac. SPLAT_LPIPS=0 turns it off.
+        lpips_weight=0.25,
         mesh_detail="full",
     ),
 }

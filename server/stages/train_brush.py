@@ -65,7 +65,8 @@ def run(job, work: Path, preset):
         "--export-path", str(export_dir),
         "--export-name", "export_{iter}.ply",
     ]
-    if preset.lpips_weight:
+    # SPLAT_LPIPS=0 drops Max's LPIPS loss on machines without the memory for it.
+    if preset.lpips_weight and os.environ.get("SPLAT_LPIPS", "1") != "0":
         args += ["--lpips-loss-weight", str(preset.lpips_weight)]
     if supports_mip:
         args += ["--render-mode", "mip"]
