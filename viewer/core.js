@@ -1,15 +1,9 @@
-// The shared viewer rig.
+// The viewer rig: scene setup, level of detail, adaptive resolution, fly
+// navigation and the frame loop. The app's viewer (web/viewer.js) adds scene
+// loading, camera framing and editing tools on top.
 //
-// Two front ends draw splats: the app's live reconstruction viewer
-// (web/viewer.js) and the demo site's (site/assets/viewer.js). Everything they
-// do identically lives here — scene setup, level of detail, adaptive
-// resolution, fly navigation, and the frame loop — so the tuning below has one
-// home instead of two that drift. Each front end adds its own scene loading and
-// camera framing on top.
-//
-// Pages reach this module through an import map ("splat-viewer/"), which is why
-// nothing here resolves a path itself: the app serves it from /viewer/, the
-// static site from ./viewer/.
+// Pages reach this module through an import map ("splat-viewer/"), so nothing
+// here resolves a path itself; the app serves it from /viewer/.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SparkRenderer } from "@sparkjsdev/spark";

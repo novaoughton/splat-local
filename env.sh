@@ -1,6 +1,7 @@
-# Local paths for heavy, generated data. Sourced by setup.sh and run.sh.
-# The repo lives on Google Drive, so the venv, Brush build and job folders
-# are kept on local disk instead, where Drive won't try to sync them.
+# Where heavy, generated data lives (Python env, Brush build, projects). Sourced by
+# setup.sh and run.sh. Defaults to ~/SplatPipelineData, outside the repo, so a repo
+# in a synced folder (Google Drive, iCloud) never syncs gigabytes of build output.
+# Set SPLAT_DATA_DIR before running either script to put it somewhere else.
 
 export SPLAT_DATA_DIR="${SPLAT_DATA_DIR:-$HOME/SplatPipelineData}"
 export UV_PROJECT_ENVIRONMENT="$SPLAT_DATA_DIR/venv"

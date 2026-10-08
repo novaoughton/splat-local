@@ -11,7 +11,7 @@ changed. This is the measurement behind that.
 ## The numbers
 
 Chrome, 120 Hz display, 2x device pixel ratio, the 135,575-splat demo scene
-(`site/scenes/home.sog`) on the demo viewer page. "Draws/sec" is
+on the upstream project's demo viewer page (the demo site has since been removed from this repo). "Draws/sec" is
 `window.__splatRig.framesDrawn` sampled over multi-second windows; the loop itself keeps
 ticking at ~120 Hz throughout, which is the point — ticks are free, draws are not.
 
