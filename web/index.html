@@ -245,6 +245,36 @@
   .tp-measure input { width: 70px; font-family: var(--font-mono); font-size: 11px; color: var(--text);
     background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 3px 4px; }
 
+  .scene-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    background: rgba(10,11,12,.7);
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    pointer-events: none;
+  }
+  .spinner {
+    width: 12px; height: 12px;
+    border: 2px solid var(--border-hi);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .unity-export { display: flex; flex-direction: column; gap: 8px; }
+  .unity-status { font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+  .unity-status b { color: var(--text); font-weight: 600; }
+
   .nav-hint {
     position: absolute;
     bottom: 14px;
@@ -512,6 +542,7 @@
     <main class="viewport" id="viewport">
       <canvas id="canvas"></canvas>
       <div class="viewport-hud" id="viewportHud"></div>
+      <div class="scene-loading" id="sceneLoading" hidden><span class="spinner"></span>loading scene…</div>
       <label class="frusta-toggle" id="frustaToggle" hidden>
         <input type="checkbox" id="frustaCheckbox" checked />
         camera frusta

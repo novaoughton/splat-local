@@ -56,6 +56,7 @@ let splatCountUrl = null; // the checkpoint URL splatCount belongs to
 let splatCountKey = null; // last lookup made, so state events don't repeat it
 
 frustaCheckbox.addEventListener("change", () => viewer.setFrustaVisible(frustaCheckbox.checked));
+viewer.onLoadingChange = (on) => { $("sceneLoading").hidden = !on; };
 
 // Grid and transforms, for finished projects. Edits save with the project a
 // moment after the last change; nothing is baked into the downloads yet.
@@ -76,22 +77,27 @@ gridSlider.addEventListener("input", updateGrid);
 gridSlider.addEventListener("change", () => gridSlider.blur()); // hand WASD back to the viewer
 
 let saveTimer = null;
+function currentTransform() {
+  return { ...viewer.getTransform(), scaled: transformPanel.scaled };
+}
+function putTransform(id) {
+  return fetch(`/api/jobs/${encodeURIComponent(id)}/transform`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(currentTransform()),
+  }).then((r) => { if (!r.ok) throw new Error(`saving the transform failed (${r.status})`); });
+}
 function saveTransform() {
   clearTimeout(saveTimer);
   const id = jobId;
   saveTimer = setTimeout(() => {
     if (!id || id !== jobId) return;
-    fetch(`/api/jobs/${encodeURIComponent(id)}/transform`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...viewer.getTransform(), scaled: transformPanel.scaled }),
-    }).then((r) => { if (!r.ok) console.error("saving the transform failed:", r.status); })
-      .catch((e) => console.error("saving the transform failed:", e));
+    putTransform(id).catch((e) => console.error(e));
   }, 500);
 }
 
 const transformPanel = createTransformPanel($("transformPanel"), viewer, {
-  onChange() { saveTransform(); updateGrid(); },
+  onChange() { saveTransform(); updateGrid(); if (lastDoneState) updateUnityExport(lastDoneState); },
   onAnchorTab() { if (!gridCheckbox.checked) { gridCheckbox.checked = true; updateGrid(); } },
 });
 transformBtn.addEventListener("click", () => setTransformOpen(transformBtn.getAttribute("aria-expanded") !== "true"));
@@ -415,9 +421,17 @@ function mountDone() {
     <div class="disk-note" id="diskNote"></div>
     <button class="btn" id="cleanBtn" hidden></button>
     <hr class="hr" />
+    <div class="unity-export">
+      <div class="eyebrow">unity export</div>
+      <div class="unity-status" id="unityStatus"></div>
+      <button class="btn" id="unityBtn">Export for Unity</button>
+    </div>
+    <hr class="hr" />
     ${projectButtonsHTML()}
   `;
-  els = { artifactList: $("artifactList"), title: $("doneTitle"), meshNote: $("meshNote"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn") };
+  els = { artifactList: $("artifactList"), title: $("doneTitle"), meshNote: $("meshNote"), diskNote: $("diskNote"), cleanBtn: $("cleanBtn"),
+          unityStatus: $("unityStatus"), unityBtn: $("unityBtn") };
+  els.unityBtn.addEventListener("click", startUnityExport);
   wireProjectButtons();
   // A finished room opens from inside, among the capture cameras, where their
   // frusta are clutter; they stay one click away.
@@ -551,7 +565,69 @@ function updateRunning(state) {
   }
 }
 
+// --- Unity export ---------------------------------------------------------
+// Files baked from the saved transform (server/bake.py). The status compares
+// what was baked with what the viewer shows now, so later edits read as
+// "out of date".
+let lastDoneState = null;
+let unityPoll = null;
+
+function sameTransform(a, b) {
+  const key = (t) => JSON.stringify(t && ["assets", "anchor", "level_up", "scaled"].map((k) => t[k]),
+    (_, v) => (typeof v === "number" ? Math.round(v * 1e5) / 1e5 : v));
+  return !!a && !!b && key(a) === key(b);
+}
+
+function updateUnityExport(state) {
+  if (!els.unityStatus) return;
+  const ux = state.unity_export;
+  const when = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  let text;
+  if (ux?.status === "running") text = "Exporting… a minute or two for a big room.";
+  else if (ux?.status === "error") text = `<b>Export failed:</b> ${escapeHTML(ux.error || "unknown error")}`;
+  else if (ux?.status === "done") {
+    text = sameTransform(ux.transform, currentTransform())
+      ? `Exported at ${when(ux.at)}; matches the current transform. Files are in the downloads above.`
+      : `<b>Out of date:</b> the transform has changed since the export at ${when(ux.at)}.`;
+  } else text = "Writes the splat and mesh upright, with the anchor as the origin. The originals above stay as they are.";
+  if (!transformPanel.scaled && ux?.status !== "running") text += " <b>Scale not measured:</b> units aren't metres yet (transform → measure).";
+  els.unityStatus.innerHTML = text;
+  els.unityBtn.disabled = ux?.status === "running";
+  if (ux?.status === "running" && !unityPoll) pollUnityExport();
+}
+
+function pollUnityExport() {
+  if (unityPoll) return;
+  const id = jobId;
+  unityPoll = setInterval(async () => {
+    if (id !== jobId) { clearInterval(unityPoll); unityPoll = null; return; }
+    const state = await fetch(`/api/jobs/${encodeURIComponent(id)}`).then((r) => r.json()).catch(() => null);
+    if (!state) return;
+    render(state);
+    if (state.unity_export?.status !== "running") { clearInterval(unityPoll); unityPoll = null; }
+  }, 2000);
+}
+
+async function startUnityExport() {
+  const id = jobId;
+  els.unityBtn.disabled = true;
+  clearTimeout(saveTimer);
+  try {
+    await putTransform(id); // export exactly what's on screen
+    const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/unity-export`, { method: "POST" });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `export failed (${r.status})`);
+  } catch (e) {
+    els.unityStatus.innerHTML = `<b>Couldn't export:</b> ${escapeHTML(e.message)}`;
+    els.unityBtn.disabled = false;
+    return;
+  }
+  els.unityStatus.textContent = "Exporting… a minute or two for a big room.";
+  pollUnityExport();
+}
+
 function updateDone(state) {
+  lastDoneState = state;
+  updateUnityExport(state);
   if (state.name) els.title.textContent = state.name;
   els.artifactList.innerHTML = (state.artifacts || []).map((a) => `
     <div class="artifact">
@@ -783,6 +859,8 @@ function resetToIdle() {
   resetViewBtn.hidden = true;
   layerToggle.hidden = true;
   hideViewTools();
+  if (unityPoll) { clearInterval(unityPoll); unityPoll = null; }
+  lastDoneState = null;
   layerShown = "splat";
   layerToggle.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.layer === "splat"));
   hudCheckpoint = null;

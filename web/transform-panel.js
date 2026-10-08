@@ -26,6 +26,7 @@ export function createTransformPanel(root, viewer, { onChange, onAnchorTab }) {
     </div>
     <div class="tp-actions">
       <button class="view-btn" data-act="measure" data-only="assets">measure</button>
+      <button class="view-btn" data-act="floor" data-only="anchor">floor</button>
       <button class="view-btn" data-act="place" data-only="anchor">place</button>
       <button class="view-btn" data-act="find">find</button>
       <button class="view-btn" data-act="reset">reset</button>
@@ -43,7 +44,7 @@ export function createTransformPanel(root, viewer, { onChange, onAnchorTab }) {
 
   function unitsNote() {
     return tab === "anchor"
-      ? "Move and turn the grid so <b>Y points up</b> and <b>Z faces the front</b>. Exports will use this as their origin."
+      ? "Use <b>floor</b> to sit the grid on the floor, then turn it so <b>Z faces the front</b>. Exports use it as their origin."
       : scaled ? "Units are <b>metres</b> (set by measuring)." : "Units are the reconstruction's own, <b>not metres</b>. Measure a known length to fix that.";
   }
 
@@ -118,6 +119,8 @@ export function createTransformPanel(root, viewer, { onChange, onAnchorTab }) {
       startMeasure();
     } else if (b.dataset.act === "place") {
       startPlace();
+    } else if (b.dataset.act === "floor") {
+      startFloor();
     } else if (b.dataset.act === "find") {
       viewer.focus(tab);
     } else if (b.dataset.act === "apply-scale") {
@@ -158,6 +161,29 @@ export function createTransformPanel(root, viewer, { onChange, onAnchorTab }) {
         viewer.placeAnchor(point);
         cancelMeasure();
         changed();
+      },
+    });
+  }
+
+  // Three floor points: the anchor moves to their centre and its Y becomes the
+  // floor's normal, so exports come out with the floor at y = 0.
+  function startFloor() {
+    measuring = true;
+    attachGizmo();
+    note.innerHTML = "Click <b>3 points on the floor</b>, spread well apart (clear floor, not rugs or clutter). Esc cancels.";
+    viewer.startMeasure({
+      count: 3,
+      onPoint(i, hit) {
+        if (!hit) note.innerHTML = "Missed. Click <b>on the floor</b>.";
+        else note.innerHTML = i < 2 ? `Point ${i + 1} of 3. Next floor point.` : "Levelling…";
+      },
+      onDone(points) {
+        const r = viewer.setAnchorFromPlane(points);
+        cancelMeasure();
+        changed();
+        note.innerHTML = r.method === "fit"
+          ? `Levelled to the floor: a plane through <b>${r.points}</b> floor points, ${r.tiltDeg.toFixed(1)}° from the room's own level.`
+          : `Not enough clear floor there to fit (or it disagreed with the room's level), so the grid uses the room's level at that height. Try <b>floor</b> on open floor for a closer fit.`;
       },
     });
   }

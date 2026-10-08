@@ -9,6 +9,7 @@
 - `POST /api/jobs/{id}/clean` — remove a finished project's working files: `checkpoints/`, `colmap/`, `colmap_da3/`, `dataset/`, `mesh_input/`, `mesh_raw/` and every frame not used as a thumbnail. The exports, source video, `sparse.ply` and `project.json` stay, so the project opens and views as before; it just can't be retrained without starting again from the video. Returns `{"freed", "bytes"}` and sets `state.cleaned`. 409 unless the project finished.
 - `POST /api/jobs` — multipart form: `video` (file), `preset` (`preview|high|max`, default `high`), `pose_backend` (`colmap|da3`, default `colmap`), `name` (optional; defaults to the video's file name without extension), `outputs` (`splat|mesh|both`, default `splat`; see [Mesh output](#mesh-output)). Returns `{"job_id": str}`. 409 if a job is already running; 400 if the video is longer than the preset's `max_video_s`.
 - `PUT /api/jobs/{id}/transform` — JSON body `{"assets": {"position": [x,y,z], "rotation_deg": [x,y,z], "scale": s}, "anchor": {"position": [x,y,z], "rotation_deg": [x,y,z]}, "scaled": bool, "level_up": [x,y,z] | null}`. Saves the viewer's transforms as `state.transform` and returns `{"transform": ...}`. `assets` moves the splat and mesh together; `anchor` places the grid, the frame exports will be re-expressed in (Y up, Z forward). Both are in the viewer's levelled frame, which `level_up` (the reconstruction's estimated up direction) reproduces; rotations are degrees, applied Z, then X, then Y as in Unity. `scaled` means the asset scale was set by measuring, so units are metres. Not yet baked into downloads (M3). 400 if malformed, 409 while the job runs.
+- `POST /api/jobs/{id}/unity-export` — writes the Unity files from the saved `state.transform` in the background and returns 202 `{"status": "running"}`. Progress is in `state.unity_export` (`{"status": "running"|"done"|"error", "transform": <the one baked>, "started"|"at": t, "error"?}`); the files join `artifacts` when done. 409 unless the project is done, while a reconstruction is running, or while an export for it is already running; 400 if no transform has been saved. See [Unity export](#unity-export).
 - `GET /api/jobs/active` — `{"job_id": str | null}` for the currently running job (lets any tab attach).
 - `GET /api/jobs/{id}` — JSON snapshot of job state (same shape as SSE `state` payload).
 - `GET /api/jobs/{id}/events` — SSE stream. On connect, emits current state, then updates.
@@ -82,6 +83,18 @@ The `mesh` stage runs `tools/objcap`, a small Swift CLI around Apple's Object Ca
 - **View** — `scene-view.sog`: what the viewer loads. Same scene with an opacity floor (`Preset.view_opacity_min`) and Morton reordering, so viewer-side cleanup never affects the download.
 
 Without Node (`npx`), only the raw `scene.ply` checkpoint copy is produced and the viewer keeps the last training checkpoint.
+
+## Unity export
+
+`server/bake.py` re-expresses the splat and mesh in the frame set up in the viewer, and leaves the originals untouched:
+
+- `scene-unity.ply` — `scene.ply` moved by splat-transform (positions, orientations, scales and SH all transformed).
+- `mesh-unity.zip` — `mesh-unity/mesh.obj` (vertices moved, normals turned) with its MTL, textures and `transform.json`.
+- `unity-transform.json` — the 4×4 matrix (row-major, p′ = M·[x, y, z, 1]) with its scale, rotation and translation, the units, and the transform it came from.
+
+The frame is right-handed with +Y up and +Z the anchor's forward, and the anchor at the origin: p′ = N⁻¹·A·W·p, where W turns COLMAP's +Y-down frame upright and levels it (`level_up`), A is the assets transform and N the anchor's. Units are metres when the scale was set by measuring (`scaled`), reconstruction units otherwise. Unity's own handedness flip is left to its OBJ importer and the splat plugins (checked in M4).
+
+The viewer's **floor** tool sets the anchor from three clicks on the floor: it fits a plane to the sparse points around them (outliers trimmed) and falls back to the room's level if too few points are there or the fit is more than 15° off it. On the library room, the exported floor came out within 0.25° of level and about 1 cm of y = 0.
 
 ## Debug report
 

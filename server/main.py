@@ -10,7 +10,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import pipeline, projects, versions
+from . import bake, pipeline, projects, versions
 from .presets import DEFAULT_PRESET, PRESETS
 from .pipeline import Job
 from .stages import frames as frames_stage
@@ -93,6 +93,48 @@ async def set_transform(job_id: str, request: Request):
     job.update(transform=transform)
     await asyncio.to_thread(projects.save, job)
     return {"transform": transform}
+
+
+_baking: set[str] = set()  # job ids with a Unity export under way
+
+
+@app.post("/api/jobs/{job_id}/unity-export", status_code=202)
+async def unity_export(job_id: str):
+    """Write the Unity files (splat and mesh in the anchor's frame) in the background."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    state = job.snapshot()[0]
+    if state["stage"] != "done":
+        raise HTTPException(409, "only a finished project can be exported")
+    if pipeline.active_job_id() is not None:
+        raise HTTPException(409, "a reconstruction is running; export when it has finished")
+    if job_id in _baking:
+        raise HTTPException(409, "an export is already running for this project")
+    if not state.get("transform"):
+        raise HTTPException(400, "set the transform in the viewer first (it is saved with the project)")
+
+    _baking.add(job_id)
+    baked = state["transform"]
+    job.update(unity_export={"status": "running", "transform": baked, "started": time.time()})
+
+    async def bake_in_background():
+        try:
+            files = await asyncio.to_thread(bake.run, job)
+            names = {f["name"] for f in files}
+            others = [a for a in (job.snapshot()[0].get("artifacts") or []) if a.get("name") not in names]
+            job.update(artifacts=others + files, message="Unity export ready",
+                       unity_export={"status": "done", "transform": baked, "at": time.time()})
+        except Exception as exc:
+            job.update(unity_export={"status": "error", "transform": baked, "at": time.time(), "error": str(exc)})
+        finally:
+            _baking.discard(job_id)
+            await asyncio.to_thread(projects.save, job)
+
+    task = asyncio.create_task(bake_in_background())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"status": "running"}
 
 
 @app.delete("/api/jobs/{job_id}")
